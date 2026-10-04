@@ -22,6 +22,47 @@ export interface AppSettings {
   filesDir: string
 }
 
+// ─── Token Balance Types ────────────────────────────────────
+
+export interface TokenBalanceData {
+  isAvailable: boolean
+  currency: string
+  totalBalance: number
+  grantedBalance: number
+  toppedUpBalance: number
+  isTokenQuota?: boolean
+  remainingRequests?: number
+  remainingTokens?: number
+  note?: string
+}
+
+export interface TokenBalanceResult {
+  success: boolean
+  data?: TokenBalanceData
+  error?: string
+}
+
+export interface TokenKeyConfig {
+  id: string
+  platform: string
+  label: string
+  createdAt: number
+  balance?: TokenBalanceResult
+}
+
+export interface TokenPlatformInfo {
+  id: string
+  name: string
+  description: string
+  website: string
+  rechargeUrl: string
+  currency: string
+  credentialType: string
+  credentialHint: string
+  isTokenQuota: boolean
+  note?: string
+}
+
 declare global {
   interface Window {
     clipboardApi: {
@@ -44,6 +85,17 @@ declare global {
       setFilesDirectory: (dir: string) => Promise<boolean>
       getFilesDirectory: () => Promise<string>
       resetFilesDirectory: () => Promise<boolean>
+    }
+    tokenApi: {
+      getPlatforms: () => Promise<TokenPlatformInfo[]>
+      getKeys: () => Promise<TokenKeyConfig[]>
+      addKey: (platform: string, key: string, label: string) => Promise<TokenKeyConfig | null>
+      deleteKey: (id: string) => Promise<boolean>
+      refreshBalance: (id: string) => Promise<TokenKeyConfig | null>
+      refreshAllBalances: () => Promise<boolean>
+      openRecharge: (platformId: string) => Promise<boolean>
+      onKeysUpdated: (callback: (keys: TokenKeyConfig[]) => void) => void
+      onShowTokenBalance: (callback: () => void) => void
     }
   }
 }

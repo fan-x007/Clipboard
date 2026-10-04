@@ -3,11 +3,15 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { execSync } from 'child_process'
 import { ClipboardStore, SettingsStore } from './store'
+import { TokenStore, PlatformInfo } from './tokenStore'
+import { loadPlatforms, getBalance, getSupportedPlatforms } from './tokenPlatforms'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let store: ClipboardStore | null = null
 let settingsStore: SettingsStore | null = null
+let tokenStore: TokenStore | null = null
+let tokenPlatforms: PlatformInfo[] = []
 let isWatching = false
 let lastText = ''
 let lastFilePaths: string[] = []
@@ -15,8 +19,35 @@ let currentShortcut: string = ''
 
 const POLL_INTERVAL = 500 // ms
 
-// Simple clipboard SVG icon for tray
-const TRAY_ICON_SVG = `
+// Get icon paths (from build dir in dev, resources dir in packaged app)
+function getTrayIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'tray.png')
+  }
+  return path.join(__dirname, '../build/tray.png')
+}
+
+function getAppIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icon.png')
+  }
+  return path.join(__dirname, '../build/icon.png')
+}
+
+function createTrayIcon() {
+  try {
+    const iconPath = getTrayIconPath()
+    if (fs.existsSync(iconPath)) {
+      const img = nativeImage.createFromPath(iconPath)
+      if (!img.isEmpty()) {
+        return img.resize({ width: 16, height: 16 })
+      }
+    }
+  } catch {
+    // fall through to SVG backup
+  }
+  // Fallback: SVG icon
+  const TRAY_ICON_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
   <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
@@ -24,8 +55,6 @@ const TRAY_ICON_SVG = `
   <line x1="9" y1="16" x2="15" y2="16"/>
 </svg>
 `
-
-function createTrayIcon() {
   try {
     const img = nativeImage.createFromDataURL(
       'data:image/svg+xml;base64,' + Buffer.from(TRAY_ICON_SVG).toString('base64')
@@ -46,6 +75,7 @@ function createWindow() {
     alwaysOnTop: true,
     skipTaskbar: true,
     show: false,
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -73,6 +103,14 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     { label: '显示剪贴板', click: () => toggleWindow() },
+    { type: 'separator' },
+    { label: 'Token 余额', click: () => {
+      if (!mainWindow) return
+      if (!mainWindow.isVisible()) {
+        toggleWindow()
+      }
+      mainWindow.webContents.send('show-token-balance')
+    }},
     { type: 'separator' },
     { label: '清空历史', click: () => {
       store?.clear()
@@ -420,11 +458,116 @@ function registerIpcHandlers() {
     }
     return false
   })
+
+  // ─── Token Balance Handlers ────────────────────────────────
+
+  ipcMain.handle('token:get-platforms', () => {
+    return tokenPlatforms
+  })
+
+  ipcMain.handle('token:get-keys', () => {
+    return tokenStore?.getKeys() || []
+  })
+
+  ipcMain.handle('token:add-key', async (_event, platform: string, key: string, label: string) => {
+    if (!tokenStore) return null
+    const keyConfig = tokenStore.addKey(platform, key, label)
+
+    // 异步查询余额
+    try {
+      const decryptedKey = tokenStore.getDecryptedKey(keyConfig.id)
+      if (decryptedKey) {
+        const balance = await getBalance(platform, decryptedKey)
+        tokenStore.setBalance(keyConfig.id, { success: true, data: balance })
+      }
+    } catch (e) {
+      tokenStore.setBalance(keyConfig.id, { success: false, error: (e as Error).message })
+    }
+
+    mainWindow?.webContents.send('token:keys-updated', tokenStore.getKeys())
+    updateTokenTrayTooltip()
+    return tokenStore.getKey(keyConfig.id)
+  })
+
+  ipcMain.handle('token:delete-key', (_event, id: string) => {
+    tokenStore?.deleteKey(id)
+    mainWindow?.webContents.send('token:keys-updated', tokenStore?.getKeys() || [])
+    updateTokenTrayTooltip()
+    return true
+  })
+
+  ipcMain.handle('token:refresh-balance', async (_event, id: string) => {
+    if (!tokenStore) return null
+    const keyConfig = tokenStore.getKey(id)
+    if (!keyConfig) return null
+
+    try {
+      const decryptedKey = tokenStore.getDecryptedKey(id)
+      if (!decryptedKey) {
+        throw new Error('无法解密 API Key')
+      }
+      const balance = await getBalance(keyConfig.platform, decryptedKey)
+      tokenStore.setBalance(id, { success: true, data: balance })
+    } catch (e) {
+      tokenStore.setBalance(id, { success: false, error: (e as Error).message })
+    }
+
+    mainWindow?.webContents.send('token:keys-updated', tokenStore.getKeys())
+    updateTokenTrayTooltip()
+    return tokenStore.getKey(id)
+  })
+
+  ipcMain.handle('token:refresh-all-balances', async () => {
+    await refreshAllTokenBalances()
+    return true
+  })
+
+  ipcMain.handle('token:open-recharge', (_event, platformId: string) => {
+    const platform = tokenPlatforms.find(p => p.id === platformId)
+    if (platform?.rechargeUrl) {
+      shell.openExternal(platform.rechargeUrl)
+    }
+    return true
+  })
 }
 
 function registerShortcuts() {
   const shortcut = settingsStore?.getToggleShortcut() || 'CommandOrControl+Shift+V'
   updateToggleShortcut(shortcut)
+}
+
+// ─── Token Balance Helpers ────────────────────────────────
+
+async function refreshAllTokenBalances() {
+  if (!tokenStore) return
+  const keys = tokenStore.getKeys()
+  for (const key of keys) {
+    try {
+      const decryptedKey = tokenStore.getDecryptedKey(key.id)
+      if (decryptedKey) {
+        const balance = await getBalance(key.platform, decryptedKey)
+        tokenStore.setBalance(key.id, { success: true, data: balance })
+      }
+    } catch (e) {
+      tokenStore.setBalance(key.id, { success: false, error: (e as Error).message })
+    }
+  }
+  mainWindow?.webContents.send('token:keys-updated', tokenStore.getKeys())
+  updateTokenTrayTooltip()
+}
+
+function updateTokenTrayTooltip() {
+  if (!tray || !tokenStore) return
+  const keys = tokenStore.getKeys()
+  const totalCny = keys
+    .filter(k => k.balance?.success && k.balance.data?.currency === 'CNY')
+    .reduce((sum, k) => sum + (k.balance!.data!.totalBalance || 0), 0)
+  if (totalCny > 0) {
+    const availableCount = keys.filter(k => k.balance?.success && k.balance.data?.isAvailable).length
+    tray.setToolTip(`Clipboard Vibe  |  Token: ¥${totalCny.toFixed(2)} (${availableCount}/${keys.length})`)
+  } else {
+    tray.setToolTip('Clipboard Vibe')
+  }
 }
 
 function updateToggleShortcut(newShortcut: string): boolean {
@@ -452,7 +595,7 @@ function updateToggleShortcut(newShortcut: string): boolean {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   settingsStore = new SettingsStore()
   const maxHistory = settingsStore.getMaxHistory()
   const maxFiles = settingsStore.getMaxFiles()
@@ -462,11 +605,19 @@ app.whenReady().then(() => {
   if (customFilesDir) {
     store.setFilesDir(customFilesDir)
   }
+
+  // Initialize token balance module
+  tokenPlatforms = await loadPlatforms()
+  tokenStore = new TokenStore()
+
   createWindow()
   createTray()
   registerIpcHandlers()
   registerShortcuts()
   startClipboardWatcher()
+
+  // Refresh token balances on startup (in background)
+  refreshAllTokenBalances()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

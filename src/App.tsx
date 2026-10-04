@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { ClipboardItem, AppSettings } from './vite-env.d'
+import type { ClipboardItem, AppSettings, TokenKeyConfig, TokenPlatformInfo } from './vite-env.d'
 
-type TabType = 'all' | 'files' | 'favorites' | 'settings'
+type TabType = 'all' | 'files' | 'favorites' | 'token' | 'settings'
 
 const DEFAULT_SHORTCUT = 'CommandOrControl+Shift+V'
 const DEFAULT_MAX_HISTORY = 200
@@ -102,6 +102,18 @@ function App() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const recordBtnRef = useRef<HTMLButtonElement>(null)
 
+  // ─── Token Balance State ────────────────────────────────
+  const [tokenPlatforms, setTokenPlatforms] = useState<TokenPlatformInfo[]>([])
+  const [tokenKeys, setTokenKeys] = useState<TokenKeyConfig[]>([])
+  const [selectedTokenPlatform, setSelectedTokenPlatform] = useState('')
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [accessKeyId, setAccessKeyId] = useState('')
+  const [accessKeySecret, setAccessKeySecret] = useState('')
+  const [apiKeyLabel, setApiKeyLabel] = useState('')
+  const [tokenLoading, setTokenLoading] = useState(false)
+  const [tokenToast, setTokenToast] = useState<{ msg: string; type: string } | null>(null)
+  const tokenToastTimerRef = useRef<NodeJS.Timeout | null>(null)
+
   // Filter items based on search and tab
   const filteredItems = items.filter(item => {
     const matchesSearch = searchQuery === '' ||
@@ -140,6 +152,42 @@ function App() {
     }
   }, [])
 
+  // ─── Token Balance Effects ────────────────────────────────
+
+  // Load token data on mount
+  useEffect(() => {
+    if (window.tokenApi) {
+      Promise.all([
+        window.tokenApi.getPlatforms(),
+        window.tokenApi.getKeys(),
+      ]).then(([plats, keys]) => {
+        setTokenPlatforms(plats)
+        setTokenKeys(keys)
+        if (plats.length > 0) {
+          setSelectedTokenPlatform(plats[0].id)
+        }
+      })
+    }
+  }, [])
+
+  // Listen for token key updates
+  useEffect(() => {
+    if (window.tokenApi) {
+      window.tokenApi.onKeysUpdated((keys) => {
+        setTokenKeys(keys)
+      })
+    }
+  }, [])
+
+  // Listen for show-token-balance from tray
+  useEffect(() => {
+    if (window.tokenApi) {
+      window.tokenApi.onShowTokenBalance(() => {
+        setActiveTab('token')
+      })
+    }
+  }, [])
+
   // Focus search on mount / tab change
   useEffect(() => {
     if (activeTab !== 'settings') {
@@ -152,10 +200,10 @@ function App() {
     setSelectedIndex(0)
   }, [searchQuery, activeTab])
 
-  // Keyboard navigation (only when not in settings tab and not recording)
+  // Keyboard navigation (only when not in settings/token tab and not recording)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isRecording || activeTab === 'settings') return
+      if (isRecording || isSettingsTab || activeTab === 'token') return
 
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -355,6 +403,104 @@ function App() {
     }
   }, [])
 
+  // ─── Token Balance Handlers ────────────────────────────────
+
+  const showTokenToast = useCallback((msg: string, type = 'success') => {
+    setTokenToast({ msg, type })
+    if (tokenToastTimerRef.current) clearTimeout(tokenToastTimerRef.current)
+    tokenToastTimerRef.current = setTimeout(() => setTokenToast(null), 2500)
+  }, [])
+
+  const handleAddTokenKey = useCallback(async () => {
+    if (!selectedTokenPlatform) {
+      showTokenToast('请选择平台', 'error')
+      return
+    }
+
+    const platform = tokenPlatforms.find(p => p.id === selectedTokenPlatform)
+    const isCloudKey = platform && platform.credentialType !== 'api_key'
+    let keyValue = ''
+
+    if (isCloudKey) {
+      const idLabel = platform?.credentialType === 'tencent_cloud' ? 'SecretId' : 'AccessKey ID'
+      const secretLabel = platform?.credentialType === 'tencent_cloud' ? 'SecretKey' : 'AccessKey Secret'
+      if (!accessKeyId.trim() || !accessKeySecret.trim()) {
+        showTokenToast(`请输入 ${idLabel} 和 ${secretLabel}`, 'error')
+        return
+      }
+      keyValue = `${accessKeyId.trim()}|${accessKeySecret.trim()}`
+    } else {
+      if (!apiKeyInput.trim()) {
+        showTokenToast('请输入 API Key', 'error')
+        return
+      }
+      keyValue = apiKeyInput.trim()
+    }
+
+    setTokenLoading(true)
+    try {
+      const result = await window.tokenApi?.addKey(
+        selectedTokenPlatform,
+        keyValue,
+        apiKeyLabel.trim()
+      )
+      if (result) {
+        showTokenToast('添加成功，正在查询余额...')
+        setApiKeyInput('')
+        setAccessKeyId('')
+        setAccessKeySecret('')
+        setApiKeyLabel('')
+      }
+    } catch (e) {
+      showTokenToast(`添加失败: ${(e as Error).message}`, 'error')
+    } finally {
+      setTokenLoading(false)
+    }
+  }, [selectedTokenPlatform, tokenPlatforms, apiKeyInput, accessKeyId, accessKeySecret, apiKeyLabel, showTokenToast])
+
+  const handleDeleteTokenKey = useCallback(async (id: string) => {
+    try {
+      await window.tokenApi?.deleteKey(id)
+      showTokenToast('已删除')
+    } catch (e) {
+      showTokenToast('删除失败', 'error')
+    }
+  }, [showTokenToast])
+
+  const handleRefreshTokenBalance = useCallback(async (id: string) => {
+    try {
+      await window.tokenApi?.refreshBalance(id)
+    } catch (e) {
+      showTokenToast('刷新失败', 'error')
+    }
+  }, [showTokenToast])
+
+  const handleRefreshAllTokens = useCallback(async () => {
+    try {
+      await window.tokenApi?.refreshAllBalances()
+      showTokenToast('已刷新所有余额')
+    } catch (e) {
+      showTokenToast('刷新失败', 'error')
+    }
+  }, [showTokenToast])
+
+  const handleOpenRecharge = useCallback((platformId: string) => {
+    window.tokenApi?.openRecharge(platformId)
+  }, [])
+
+  const getPlatformIcon = (platformId: string): string => {
+    const icons: Record<string, string> = {
+      deepseek: '🧠',
+      kimi: '🌙',
+      zhipu: '💎',
+      bailian: '☁️',
+      tencent: '🐧',
+      openai: '🤖',
+      anthropic: '🗣️',
+    }
+    return icons[platformId] || '🔑'
+  }
+
   const formatTime = (timestamp: number) => {
     const now = Date.now()
     const diff = now - timestamp
@@ -451,6 +597,12 @@ function App() {
           收藏 ({items.filter(i => i.favorite).length})
         </button>
         <button
+          className={`tab ${activeTab === 'token' ? 'active' : ''}`}
+          onClick={() => setActiveTab('token')}
+        >
+          💰 Token
+        </button>
+        <button
           className={`tab ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => setActiveTab('settings')}
         >
@@ -458,7 +610,7 @@ function App() {
         </button>
       </div>
 
-      {/* List / Settings */}
+      {/* List / Settings / Token */}
       {isSettingsTab ? (
         <div className="settings-panel">
           <div className="setting-section">
@@ -649,6 +801,235 @@ function App() {
             </button>
           </div>
         </div>
+      ) : activeTab === 'token' ? (
+        <div className="token-panel">
+          {/* Token Overview */}
+          <div className="token-overview">
+            <div className="token-overview-card total">
+              <div className="token-overview-label">总余额</div>
+              <div className="token-overview-value">
+                ¥ {tokenKeys
+                  .filter(k => k.balance?.success && k.balance.data?.currency === 'CNY')
+                  .reduce((sum, k) => sum + (k.balance!.data!.totalBalance || 0), 0)
+                  .toFixed(2)}
+              </div>
+              <div className="token-overview-sub">所有平台合计</div>
+            </div>
+            <div className="token-overview-card">
+              <div className="token-overview-label">已接入</div>
+              <div className="token-overview-value">{new Set(tokenKeys.map(k => k.platform)).size}</div>
+              <div className="token-overview-sub">个平台</div>
+            </div>
+            <div className="token-overview-card">
+              <div className="token-overview-label">Key 数</div>
+              <div className="token-overview-value">{tokenKeys.length}</div>
+              <div className="token-overview-sub">个密钥</div>
+            </div>
+          </div>
+
+          {/* Add Key Section */}
+          <div className="token-add-section">
+            <div className="token-section-header">
+              <h3>添加 API Key</h3>
+              <button
+                className="icon-btn"
+                onClick={handleRefreshAllTokens}
+                title="刷新所有余额"
+              >
+                🔄
+              </button>
+            </div>
+
+            <div className="token-form-row">
+              <select
+                className="input"
+                value={selectedTokenPlatform}
+                onChange={(e) => setSelectedTokenPlatform(e.target.value)}
+              >
+                {tokenPlatforms.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {(() => {
+              const platform = tokenPlatforms.find(p => p.id === selectedTokenPlatform)
+              const isCloudKey = platform && platform.credentialType !== 'api_key'
+              const isTencent = platform?.credentialType === 'tencent_cloud'
+              const idLabel = isTencent ? 'SecretId' : 'AccessKey ID'
+              const secretLabel = isTencent ? 'SecretKey' : 'AccessKey Secret'
+
+              if (isCloudKey) {
+                return (
+                  <>
+                    <div className="token-form-row">
+                      <input
+                        type="password"
+                        className="input"
+                        placeholder={`请输入 ${idLabel}`}
+                        value={accessKeyId}
+                        onChange={(e) => setAccessKeyId(e.target.value)}
+                      />
+                    </div>
+                    <div className="token-form-row">
+                      <input
+                        type="password"
+                        className="input"
+                        placeholder={`请输入 ${secretLabel}`}
+                        value={accessKeySecret}
+                        onChange={(e) => setAccessKeySecret(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )
+              }
+
+              return (
+                <div className="token-form-row">
+                  <input
+                    type="password"
+                    className="input"
+                    placeholder="请输入 API Key"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                  />
+                </div>
+              )
+            })()}
+
+            <div className="token-form-row">
+              <input
+                type="text"
+                className="input"
+                placeholder="备注名称（可选）"
+                value={apiKeyLabel}
+                onChange={(e) => setApiKeyLabel(e.target.value)}
+              />
+            </div>
+
+            <button
+              className="btn btn-primary btn-full"
+              onClick={handleAddTokenKey}
+              disabled={tokenLoading}
+            >
+              {tokenLoading ? '添加中...' : '添加并查询余额'}
+            </button>
+
+            {tokenPlatforms.find(p => p.id === selectedTokenPlatform) && (
+              <div className="token-platform-hint">
+                {tokenPlatforms.find(p => p.id === selectedTokenPlatform)?.name} -{' '}
+                {tokenPlatforms.find(p => p.id === selectedTokenPlatform)?.description}
+                {tokenPlatforms.find(p => p.id === selectedTokenPlatform)?.note && (
+                  <>
+                    <br />
+                    <span style={{ color: '#f59e0b' }}>
+                      ⚠️ {tokenPlatforms.find(p => p.id === selectedTokenPlatform)?.note}
+                    </span>
+                  </>
+                )}
+                <br />
+                <span style={{ fontSize: '12px', opacity: 0.7 }}>
+                  🔒 API Key 使用 AES-256-GCM 加密存储，密钥与本机绑定
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Balance List */}
+          <div className="token-list-section">
+            <div className="token-section-header">
+              <h3>余额监控</h3>
+            </div>
+
+            {tokenKeys.length === 0 ? (
+              <div className="empty">
+                <div className="empty-icon">🔑</div>
+                <div className="empty-text">还没有添加任何 API Key</div>
+                <div className="empty-hint">添加您的第一个 Key 开始监控余额</div>
+              </div>
+            ) : (
+              <div className="token-balance-list">
+                {tokenKeys.map(keyConfig => {
+                  const platform = tokenPlatforms.find(p => p.id === keyConfig.platform)
+                  const balance = keyConfig.balance
+                  const d = balance?.data
+
+                  return (
+                    <div key={keyConfig.id} className={`token-balance-card ${balance?.success === false ? 'error' : ''}`}>
+                      <div className="token-balance-header">
+                        <div className="token-platform-row">
+                          <span className="token-platform-icon">{getPlatformIcon(keyConfig.platform)}</span>
+                          <div className="token-platform-name">
+                            <div className="token-platform-title">{platform?.name || keyConfig.platform}</div>
+                            <div className="token-key-label">{keyConfig.label}</div>
+                          </div>
+                        </div>
+                        <div className="token-balance-actions">
+                          <button className="mini-btn" title="刷新" onClick={() => handleRefreshTokenBalance(keyConfig.id)}>
+                            🔄
+                          </button>
+                          <button className="mini-btn delete" title="删除" onClick={() => handleDeleteTokenKey(keyConfig.id)}>
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+
+                      {!balance ? (
+                        <div className="token-balance-body">
+                          <div className="token-balance-main"><span className="currency">--</span> --</div>
+                          <div className="token-balance-status pending">等待查询</div>
+                        </div>
+                      ) : !balance.success ? (
+                        <div className="token-balance-body">
+                          <div className="token-balance-error">
+                            <span>❌</span>
+                            <div>
+                              <div className="token-error-title">查询失败</div>
+                              <div className="token-error-hint">{balance.error}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="token-balance-body">
+                          <div className="token-balance-main">
+                            <span className="currency">¥</span>
+                            {d?.totalBalance.toFixed(2)}
+                          </div>
+                          <div className={`token-balance-status ${d?.isAvailable ? 'available' : 'unavailable'}`}>
+                            {d?.isAvailable ? '✓ 余额充足' : '✗ 余额不足'}
+                          </div>
+                          <div className="token-balance-details">
+                            <div className="token-detail-item">
+                              <span className="token-detail-label">充值余额</span>
+                              <span className="token-detail-value">¥{d?.toppedUpBalance.toFixed(2)}</span>
+                            </div>
+                            <div className="token-detail-item">
+                              <span className="token-detail-label">赠金余额</span>
+                              <span className="token-detail-value">¥{d?.grantedBalance.toFixed(2)}</span>
+                            </div>
+                          </div>
+                          <button
+                            className="token-recharge-btn"
+                            onClick={(e) => { e.stopPropagation(); handleOpenRecharge(keyConfig.platform) }}
+                          >
+                            💳 快速充值
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Token Toast */}
+          {tokenToast && (
+            <div className={`toast toast-${tokenToast.type}`}>
+              {tokenToast.msg}
+            </div>
+          )}
+        </div>
       ) : (
         <div className="list" ref={listRef}>
           {filteredItems.length === 0 ? (
@@ -767,7 +1148,9 @@ function App() {
         <span>
           {isSettingsTab
             ? '设置'
-            : `共 ${filteredItems.length} 条`
+            : activeTab === 'token'
+              ? `Token 余额 (${tokenKeys.length})`
+              : `共 ${filteredItems.length} 条`
           }
         </span>
         <div className="shortcut-hint">
