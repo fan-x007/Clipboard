@@ -5,6 +5,7 @@ import { execSync } from 'child_process'
 import { ClipboardStore, SettingsStore } from './store'
 import { TokenStore, PlatformInfo } from './tokenStore'
 import { loadPlatforms, getBalance, getSupportedPlatforms } from './tokenPlatforms'
+import { typingManager } from './typingManager'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -264,10 +265,11 @@ function startClipboardWatcher() {
           store?.addText(text)
           mainWindow?.webContents.send('history-updated', store?.getAll() || [])
         } else {
-          // Same text - check if it needs to be added or restored to history
+          // Same text - ensure it's at the top of history
           const allItems = store?.getAll() || []
-          const item = allItems.find(i => i.type === 'text' && i.text === text)
-          if (!item || !item.inHistory) {
+          const firstHistoryText = allItems.find(i => i.type === 'text' && i.inHistory)
+          const isAtTop = firstHistoryText && firstHistoryText.text === text
+          if (!isAtTop) {
             store?.addText(text)
             mainWindow?.webContents.send('history-updated', store?.getAll() || [])
           }
@@ -290,18 +292,21 @@ function startClipboardWatcher() {
             mainWindow?.webContents.send('history-updated', store?.getAll() || [])
           }
         } else {
-          // Same clipboard content - check if any need to be added or restored to history
+          // Same clipboard content - ensure files are at the top of history
           const allItems = store?.getAll() || []
-          let needsUpdate = false
-          for (const filePath of files) {
-            const item = allItems.find(i => i.type === 'file' && i.text === filePath)
-            if (!item || !item.inHistory) {
-              store?.addFile(filePath)
-              needsUpdate = true
+          const firstHistoryFile = allItems.find(i => i.type === 'file' && i.inHistory)
+          const firstFilePath = files[0]
+          const isAtTop = firstHistoryFile &&
+            (firstHistoryFile.text === firstFilePath || firstHistoryFile.storedPath === firstFilePath)
+          if (!isAtTop) {
+            let added = false
+            for (const filePath of files) {
+              const result = store?.addFile(filePath)
+              if (result) added = true
             }
-          }
-          if (needsUpdate) {
-            mainWindow?.webContents.send('history-updated', store?.getAll() || [])
+            if (added) {
+              mainWindow?.webContents.send('history-updated', store?.getAll() || [])
+            }
           }
         }
       }
@@ -528,6 +533,20 @@ function registerIpcHandlers() {
       shell.openExternal(platform.rechargeUrl)
     }
     return true
+  })
+
+  // ─── Auto Typing Handlers ────────────────────────────────
+
+  ipcMain.handle('typing:get-status', () => {
+    return typingManager.getStatus()
+  })
+
+  ipcMain.handle('typing:start', (_event, text: string, delay: number, interval: number) => {
+    return typingManager.startTyping(text, delay, interval)
+  })
+
+  ipcMain.handle('typing:stop', () => {
+    return typingManager.stopTyping()
   })
 }
 

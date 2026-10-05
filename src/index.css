@@ -1161,3 +1161,315 @@ select.input {
     transform: translateX(-50%) translateY(0);
   }
 }
+
+/* ─── Auto Typing Panel ──────────────────────────────── */
+
+.typing-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  -webkit-app-region: no-drag;
+  min-height: 0;
+}
+
+.typing-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.typing-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.typing-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.typing-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Settings */
+.typing-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.typing-setting-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.typing-setting-label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+}
+
+.typing-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.typing-input:focus {
+  border-color: #7c8cff;
+}
+
+.typing-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.typing-setting-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.typing-speed-buttons {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.typing-speed-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.typing-speed-btn:hover:not(:disabled) {
+  background: #7c8cff;
+  color: white;
+  border-color: #7c8cff;
+}
+
+.typing-speed-btn.active {
+  background: #7c8cff;
+  color: white;
+  border-color: #7c8cff;
+}
+
+.typing-speed-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Tip */
+.typing-tip {
+  padding: 10px 14px;
+  background: rgba(76, 175, 80, 0.15);
+  border-left: 3px solid #4caf50;
+  border-radius: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.5;
+}
+
+/* Text area */
+.typing-text-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.typing-text-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.typing-text-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+}
+
+.typing-char-count {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.typing-textarea {
+  width: 100%;
+  min-height: 160px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.typing-textarea:focus {
+  border-color: #7c8cff;
+}
+
+.typing-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.typing-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* Buttons */
+.typing-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.typing-btn {
+  padding: 9px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.typing-btn-primary {
+  background: linear-gradient(135deg, #7c8cff 0%, #b070ff 100%);
+  color: white;
+  flex: 1;
+  justify-content: center;
+  min-width: 100px;
+}
+
+.typing-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124, 140, 255, 0.4);
+}
+
+.typing-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.typing-btn-stop {
+  background: #f44336;
+  color: white;
+}
+
+.typing-btn-stop:hover:not(:disabled) {
+  background: #d32f2f;
+}
+
+.typing-btn-stop:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.typing-btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.typing-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.typing-btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Status bar */
+.typing-status-bar {
+  padding: 10px 14px;
+  background: rgba(124, 140, 255, 0.1);
+  border-radius: 8px;
+  font-size: 13px;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.typing-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4caf50;
+  flex-shrink: 0;
+}
+
+.typing-status-dot.running {
+  background: #ff9800;
+  animation: typingPulse 1s infinite;
+}
+
+@keyframes typingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.typing-status-text {
+  flex-shrink: 0;
+}
+
+.typing-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.typing-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #7c8cff, #b070ff);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.typing-progress-text {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
+}
+
+/* Warning */
+.typing-warning {
+  padding: 10px 14px;
+  background: rgba(255, 152, 0, 0.12);
+  border-left: 3px solid #ff9800;
+  border-radius: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.5;
+}

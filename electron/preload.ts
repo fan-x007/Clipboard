@@ -110,5 +110,28 @@ export const tokenApi = {
   },
 }
 
+// ─── Auto Typing API ──────────────────────────────────────
+
+export interface TypingStatus {
+  isRunning: boolean
+  status: string
+  progress: number
+  current: number
+  total: number
+}
+
+export const typingApi = {
+  getStatus: (): Promise<TypingStatus> => ipcRenderer.invoke('typing:get-status'),
+  start: (text: string, delay: number, interval: number): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('typing:start', text, delay, interval),
+  stop: (): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('typing:stop'),
+
+  onStatusUpdated: (callback: (status: TypingStatus) => void) => {
+    ipcRenderer.on('typing:status-updated', (_event, status) => callback(status))
+  },
+}
+
 contextBridge.exposeInMainWorld('clipboardApi', clipboardApi)
 contextBridge.exposeInMainWorld('tokenApi', tokenApi)
+contextBridge.exposeInMainWorld('typingApi', typingApi)

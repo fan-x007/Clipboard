@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { ClipboardItem, AppSettings, TokenKeyConfig, TokenPlatformInfo } from './vite-env.d'
+import type { ClipboardItem, AppSettings, TokenKeyConfig, TokenPlatformInfo, TypingStatus } from './vite-env.d'
 
-type TabType = 'all' | 'files' | 'favorites' | 'token' | 'settings'
+type TabType = 'all' | 'files' | 'favorites' | 'token' | 'typing' | 'settings'
 
 const DEFAULT_SHORTCUT = 'CommandOrControl+Shift+V'
 const DEFAULT_MAX_HISTORY = 200
@@ -114,6 +114,18 @@ function App() {
   const [tokenToast, setTokenToast] = useState<{ msg: string; type: string } | null>(null)
   const tokenToastTimerRef = useRef<NodeJS.Timeout | null>(null)
 
+  // ─── Auto Typing State ────────────────────────────────
+  const [typingText, setTypingText] = useState('')
+  const [typingDelay, setTypingDelay] = useState(3)
+  const [typingInterval, setTypingInterval] = useState(15)
+  const [typingStatus, setTypingStatus] = useState<TypingStatus>({
+    isRunning: false,
+    status: '就绪',
+    progress: 0,
+    current: 0,
+    total: 0,
+  })
+
   // Filter items based on search and tab
   const filteredItems = items.filter(item => {
     const matchesSearch = searchQuery === '' ||
@@ -188,6 +200,24 @@ function App() {
     }
   }, [])
 
+  // ─── Auto Typing Effects ────────────────────────────────
+
+  // Load typing status on mount
+  useEffect(() => {
+    if (window.typingApi) {
+      window.typingApi.getStatus().then(setTypingStatus)
+    }
+  }, [])
+
+  // Listen for typing status updates
+  useEffect(() => {
+    if (window.typingApi) {
+      window.typingApi.onStatusUpdated((status) => {
+        setTypingStatus(status)
+      })
+    }
+  }, [])
+
   // Focus search on mount / tab change
   useEffect(() => {
     if (activeTab !== 'settings') {
@@ -203,7 +233,7 @@ function App() {
   // Keyboard navigation (only when not in settings/token tab and not recording)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isRecording || isSettingsTab || activeTab === 'token') return
+      if (isRecording || isSettingsTab || activeTab === 'token' || activeTab === 'typing') return
 
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -521,6 +551,46 @@ function App() {
     return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
   }
 
+  // ─── Auto Typing Handlers ────────────────────────────────
+
+  const handleStartTyping = useCallback(async () => {
+    if (!typingText.trim()) {
+      return
+    }
+    if (!window.typingApi) return
+
+    const result = await window.typingApi.start(
+      typingText,
+      typingDelay,
+      typingInterval / 1000
+    )
+    if (!result.success) {
+      alert(result.message)
+    }
+  }, [typingText, typingDelay, typingInterval])
+
+  const handleStopTyping = useCallback(async () => {
+    if (!window.typingApi) return
+    await window.typingApi.stop()
+  }, [])
+
+  const handlePasteTypingText = useCallback(async () => {
+    if (!window.clipboardApi) return
+    const history = await window.clipboardApi.getHistory()
+    const latestText = history.find(i => i.type === 'text')
+    if (latestText) {
+      setTypingText(latestText.text)
+    }
+  }, [])
+
+  const handleClearTypingText = useCallback(() => {
+    setTypingText('')
+  }, [])
+
+  const setTypingSpeed = useCallback((ms: number) => {
+    setTypingInterval(ms)
+  }, [])
+
   const isSettingsTab = activeTab === 'settings'
   const fileCount = items.filter(i => i.type === 'file').length
   const textCount = items.filter(i => i.type === 'text').length
@@ -601,6 +671,12 @@ function App() {
           onClick={() => setActiveTab('token')}
         >
           💰 Token
+        </button>
+        <button
+          className={`tab ${activeTab === 'typing' ? 'active' : ''}`}
+          onClick={() => setActiveTab('typing')}
+        >
+          ⌨️ 打字
         </button>
         <button
           className={`tab ${activeTab === 'settings' ? 'active' : ''}`}
@@ -1030,6 +1106,137 @@ function App() {
             </div>
           )}
         </div>
+      ) : activeTab === 'typing' ? (
+        <div className="typing-panel">
+          {/* Settings */}
+          <div className="typing-settings">
+            <div className="typing-setting-item">
+              <label className="typing-setting-label">启动延迟（秒）</label>
+              <input
+                type="number"
+                className="typing-input"
+                value={typingDelay}
+                min={0}
+                max={60}
+                step={1}
+                onChange={(e) => setTypingDelay(Number(e.target.value))}
+                disabled={typingStatus.isRunning}
+              />
+              <div className="typing-setting-hint">开始前留出时间切换窗口</div>
+            </div>
+            <div className="typing-setting-item">
+              <label className="typing-setting-label">打字间隔（毫秒/字）</label>
+              <input
+                type="number"
+                className="typing-input"
+                value={typingInterval}
+                min={0}
+                max={500}
+                step={1}
+                onChange={(e) => setTypingInterval(Number(e.target.value))}
+                disabled={typingStatus.isRunning}
+              />
+              <div className="typing-speed-buttons">
+                <button
+                  className={`typing-speed-btn ${typingInterval === 50 ? 'active' : ''}`}
+                  onClick={() => setTypingSpeed(50)}
+                  disabled={typingStatus.isRunning}
+                >慢</button>
+                <button
+                  className={`typing-speed-btn ${typingInterval === 20 ? 'active' : ''}`}
+                  onClick={() => setTypingSpeed(20)}
+                  disabled={typingStatus.isRunning}
+                >中</button>
+                <button
+                  className={`typing-speed-btn ${typingInterval === 8 ? 'active' : ''}`}
+                  onClick={() => setTypingSpeed(8)}
+                  disabled={typingStatus.isRunning}
+                >快</button>
+                <button
+                  className={`typing-speed-btn ${typingInterval === 1 ? 'active' : ''}`}
+                  onClick={() => setTypingSpeed(1)}
+                  disabled={typingStatus.isRunning}
+                >极速</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Tip */}
+          <div className="typing-tip">
+            💡 支持中英文直接输入，无需切换输入法。基于 .NET SendKeys 实现，兼容绝大多数应用和网站。
+          </div>
+
+          {/* Text area */}
+          <div className="typing-text-area">
+            <div className="typing-text-header">
+              <span className="typing-text-label">📝 要输入的文本</span>
+              <span className="typing-char-count">字符数：{typingText.length}</span>
+            </div>
+            <textarea
+              className="typing-textarea"
+              value={typingText}
+              onChange={(e) => setTypingText(e.target.value)}
+              placeholder="在这里粘贴你要输入的文字...&#10;&#10;支持中英文混合、换行、Tab 等。&#10;点击「开始打字」后，快速切换到目标输入框即可。"
+              disabled={typingStatus.isRunning}
+            />
+          </div>
+
+          {/* Buttons */}
+          <div className="typing-buttons">
+            <button
+              className="typing-btn typing-btn-primary"
+              onClick={handleStartTyping}
+              disabled={typingStatus.isRunning || !typingText.trim()}
+            >
+              ▶ 开始打字
+            </button>
+            <button
+              className="typing-btn typing-btn-stop"
+              onClick={handleStopTyping}
+              disabled={!typingStatus.isRunning}
+            >
+              ⏹ 停止
+            </button>
+            <button
+              className="typing-btn typing-btn-secondary"
+              onClick={handlePasteTypingText}
+              disabled={typingStatus.isRunning}
+            >
+              📋 粘贴最新
+            </button>
+            <button
+              className="typing-btn typing-btn-secondary"
+              onClick={handleClearTypingText}
+              disabled={typingStatus.isRunning}
+            >
+              🗑 清空
+            </button>
+          </div>
+
+          {/* Status bar */}
+          <div className="typing-status-bar">
+            <div className={`typing-status-dot ${typingStatus.isRunning ? 'running' : ''}`}></div>
+            <span className="typing-status-text">{typingStatus.status}</span>
+            {typingStatus.total > 0 && (
+              <div className="typing-progress-bar">
+                <div
+                  className="typing-progress-fill"
+                  style={{ width: `${typingStatus.progress}%` }}
+                ></div>
+              </div>
+            )}
+            {typingStatus.total > 0 && (
+              <span className="typing-progress-text">
+                {typingStatus.current}/{typingStatus.total}
+              </span>
+            )}
+          </div>
+
+          {/* Warning */}
+          <div className="typing-warning">
+            ⚠️ 打字进行中请勿操作鼠标键盘。如需紧急停止，点击「停止」按钮。
+          </div>
+        </div>
       ) : (
         <div className="list" ref={listRef}>
           {filteredItems.length === 0 ? (
@@ -1150,7 +1357,9 @@ function App() {
             ? '设置'
             : activeTab === 'token'
               ? `Token 余额 (${tokenKeys.length})`
-              : `共 ${filteredItems.length} 条`
+              : activeTab === 'typing'
+                ? '自动打字'
+                : `共 ${filteredItems.length} 条`
           }
         </span>
         <div className="shortcut-hint">

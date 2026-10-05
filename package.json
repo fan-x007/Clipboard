@@ -1,6 +1,6 @@
 {
   "name": "clipboard-vibe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A modern clipboard history manager built with Electron + React",
   "main": "dist-electron/main.js",
   "author": "aloneaandalone",
@@ -34,6 +34,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "scripts/typer.ps1",
+        "to": "scripts/typer.ps1"
       }
     ],
     "win": {

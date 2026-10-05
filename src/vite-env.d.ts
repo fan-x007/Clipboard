@@ -63,6 +63,16 @@ export interface TokenPlatformInfo {
   note?: string
 }
 
+// ─── Auto Typing Types ──────────────────────────────────────
+
+export interface TypingStatus {
+  isRunning: boolean
+  status: string
+  progress: number
+  current: number
+  total: number
+}
+
 declare global {
   interface Window {
     clipboardApi: {
@@ -96,6 +106,12 @@ declare global {
       openRecharge: (platformId: string) => Promise<boolean>
       onKeysUpdated: (callback: (keys: TokenKeyConfig[]) => void) => void
       onShowTokenBalance: (callback: () => void) => void
+    }
+    typingApi: {
+      getStatus: () => Promise<TypingStatus>
+      start: (text: string, delay: number, interval: number) => Promise<{ success: boolean; message: string }>
+      stop: () => Promise<{ success: boolean; message: string }>
+      onStatusUpdated: (callback: (status: TypingStatus) => void) => void
     }
   }
 }
