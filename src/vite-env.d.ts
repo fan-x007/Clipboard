@@ -104,14 +104,21 @@ declare global {
       refreshBalance: (id: string) => Promise<TokenKeyConfig | null>
       refreshAllBalances: () => Promise<boolean>
       openRecharge: (platformId: string) => Promise<boolean>
+      getRefreshInterval: () => Promise<number>
+      setRefreshInterval: (minutes: number) => Promise<boolean>
       onKeysUpdated: (callback: (keys: TokenKeyConfig[]) => void) => void
       onShowTokenBalance: (callback: () => void) => void
     }
     typingApi: {
       getStatus: () => Promise<TypingStatus>
-      start: (text: string, delay: number, interval: number) => Promise<{ success: boolean; message: string }>
+      start: (text: string, delay: number, interval: number, useEnglishSymbols?: boolean) => Promise<{ success: boolean; message: string }>
       stop: () => Promise<{ success: boolean; message: string }>
       onStatusUpdated: (callback: (status: TypingStatus) => void) => void
+    }
+    imeApi: {
+      getEnglishSymbols: () => Promise<boolean>
+      setEnglishSymbols: (enabled: boolean) => Promise<boolean>
+      onEnglishSymbolsUpdated: (callback: (enabled: boolean) => void) => void
     }
   }
 }

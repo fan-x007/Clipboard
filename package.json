@@ -38,6 +38,10 @@
       {
         "from": "scripts/typer.ps1",
         "to": "scripts/typer.ps1"
+      },
+      {
+        "from": "scripts/hook.ps1",
+        "to": "scripts/hook.ps1"
       }
     ],
     "win": {

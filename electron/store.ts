@@ -80,19 +80,38 @@ export class ClipboardStore {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 9)
   }
 
+  /**
+   * Parse base name and starting counter from a file name.
+   * For example:
+   *   "report" -> { base: "report", counter: 1 }
+   *   "report (1)" -> { base: "report", counter: 2 }
+   *   "report (3)" -> { base: "report", counter: 4 }
+   *   "file (1) (2)" -> { base: "file (1)", counter: 3 }
+   */
+  private parseNameAndCounter(fullBaseName: string): { base: string; startCounter: number } {
+    const match = fullBaseName.match(/^(.*)\s\((\d+)\)$/)
+    if (match) {
+      return { base: match[1], startCounter: parseInt(match[2], 10) + 1 }
+    }
+    return { base: fullBaseName, startCounter: 1 }
+  }
+
   private copyFileToStorage(originalPath: string, id: string): string | null {
     try {
       const fileName = path.basename(originalPath)
       const ext = path.extname(originalPath)
-      const baseName = path.basename(originalPath, ext)
+      const fullBaseName = path.basename(originalPath, ext)
 
-      // Try original name first, if exists add a number suffix
+      // Parse out any existing " (N)" suffix from the base name
+      const { base, startCounter } = this.parseNameAndCounter(fullBaseName)
+
+      // Try original name first
       let storedName = fileName
       let storedPath = path.join(this.filesDir, storedName)
-      let counter = 1
+      let counter = startCounter
 
       while (fs.existsSync(storedPath)) {
-        storedName = `${baseName} (${counter})${ext}`
+        storedName = `${base} (${counter})${ext}`
         storedPath = path.join(this.filesDir, storedName)
         counter++
       }
@@ -377,8 +396,10 @@ export class ClipboardStore {
             if (fs.existsSync(newPath)) {
               // If file exists in new location, use a unique name
               const ext = path.extname(fileName)
-              const base = path.basename(fileName, ext)
-              let counter = 1
+              const fullBaseName = path.basename(fileName, ext)
+              // Parse out any existing " (N)" suffix to avoid " (1) (1)" stacking
+              const { base, startCounter } = this.parseNameAndCounter(fullBaseName)
+              let counter = startCounter
               let uniquePath = newPath
               while (fs.existsSync(uniquePath)) {
                 uniquePath = path.join(newDir, `${base} (${counter})${ext}`)
@@ -391,6 +412,12 @@ export class ClipboardStore {
             } else {
               fs.renameSync(item.storedPath, newPath)
               item.storedPath = newPath
+              if (!item.fileName) {
+                item.fileName = fileName
+              }
+              if (!item.preview) {
+                item.preview = fileName
+              }
             }
           } catch (e) {
             console.error('Failed to move file:', item.storedPath, e)
@@ -420,6 +447,8 @@ export interface AppSettings {
   maxHistory: number
   maxFiles: number
   filesDir: string
+  tokenRefreshInterval: number // in minutes, 0 = off
+  englishSymbols: boolean // use English (half-width) symbols while typing in Chinese IME mode
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -427,6 +456,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   maxHistory: 200,
   maxFiles: 100,
   filesDir: '',
+  tokenRefreshInterval: 0, // 0 = off
+  englishSymbols: false,
 }
 
 export class SettingsStore {
@@ -507,6 +538,28 @@ export class SettingsStore {
 
   setFilesDir(dir: string): boolean {
     this.settings.filesDir = dir
+    this.save()
+    return true
+  }
+
+  getTokenRefreshInterval(): number {
+    return this.settings.tokenRefreshInterval || 0
+  }
+
+  getEnglishSymbols(): boolean {
+    return !!this.settings.englishSymbols
+  }
+
+  setEnglishSymbols(enabled: boolean): boolean {
+    this.settings.englishSymbols = !!enabled
+    this.save()
+    return true
+  }
+
+  setTokenRefreshInterval(minutes: number): boolean {
+    const validValues = [0, 1, 5, 15, 30, 60, 180, 360, 720, 1440]
+    const clamped = validValues.includes(minutes) ? minutes : 0
+    this.settings.tokenRefreshInterval = clamped
     this.save()
     return true
   }

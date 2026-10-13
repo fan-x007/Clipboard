@@ -100,6 +100,10 @@ export const tokenApi = {
   refreshAllBalances: (): Promise<boolean> => ipcRenderer.invoke('token:refresh-all-balances'),
   openRecharge: (platformId: string): Promise<boolean> =>
     ipcRenderer.invoke('token:open-recharge', platformId),
+  getRefreshInterval: (): Promise<number> =>
+    ipcRenderer.invoke('token:get-refresh-interval'),
+  setRefreshInterval: (minutes: number): Promise<boolean> =>
+    ipcRenderer.invoke('token:set-refresh-interval', minutes),
 
   onKeysUpdated: (callback: (keys: TokenKeyConfig[]) => void) => {
     ipcRenderer.on('token:keys-updated', (_event, keys) => callback(keys))
@@ -122,8 +126,8 @@ export interface TypingStatus {
 
 export const typingApi = {
   getStatus: (): Promise<TypingStatus> => ipcRenderer.invoke('typing:get-status'),
-  start: (text: string, delay: number, interval: number): Promise<{ success: boolean; message: string }> =>
-    ipcRenderer.invoke('typing:start', text, delay, interval),
+  start: (text: string, delay: number, interval: number, useEnglishSymbols?: boolean): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('typing:start', text, delay, interval, useEnglishSymbols ?? false),
   stop: (): Promise<{ success: boolean; message: string }> =>
     ipcRenderer.invoke('typing:stop'),
 
@@ -132,6 +136,17 @@ export const typingApi = {
   },
 }
 
+// ─── IME English Symbols API ──────────────────────────────
+
+export const imeApi = {
+  getEnglishSymbols: (): Promise<boolean> => ipcRenderer.invoke('ime:get-english-symbols'),
+  setEnglishSymbols: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('ime:set-english-symbols', enabled),
+  onEnglishSymbolsUpdated: (callback: (enabled: boolean) => void) => {
+    ipcRenderer.on('english-symbols-updated', (_event, enabled) => callback(enabled))
+  },
+}
+
 contextBridge.exposeInMainWorld('clipboardApi', clipboardApi)
 contextBridge.exposeInMainWorld('tokenApi', tokenApi)
 contextBridge.exposeInMainWorld('typingApi', typingApi)
+contextBridge.exposeInMainWorld('imeApi', imeApi)

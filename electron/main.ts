@@ -6,6 +6,7 @@ import { ClipboardStore, SettingsStore } from './store'
 import { TokenStore, PlatformInfo } from './tokenStore'
 import { loadPlatforms, getBalance, getSupportedPlatforms } from './tokenPlatforms'
 import { typingManager } from './typingManager'
+import { imeHook } from './imeHook'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -17,6 +18,7 @@ let isWatching = false
 let lastText = ''
 let lastFilePaths: string[] = []
 let currentShortcut: string = ''
+let tokenAutoRefreshTimer: NodeJS.Timeout | null = null
 
 const POLL_INTERVAL = 500 // ms
 
@@ -97,13 +99,16 @@ function createWindow() {
   })
 }
 
-function createTray() {
-  const icon = createTrayIcon()
-  tray = new Tray(icon)
-  tray.setToolTip('Clipboard Vibe')
-
-  const contextMenu = Menu.buildFromTemplate([
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
     { label: '显示剪贴板', click: () => toggleWindow() },
+    { type: 'separator' },
+    {
+      label: '中文模式下使用英文符号',
+      type: 'checkbox',
+      checked: settingsStore?.getEnglishSymbols() || false,
+      click: (item) => setEnglishSymbolsEnabled(item.checked),
+    },
     { type: 'separator' },
     { label: 'Token 余额', click: () => {
       if (!mainWindow) return
@@ -122,8 +127,27 @@ function createTray() {
       app.quit()
     }},
   ])
+}
 
-  tray.setContextMenu(contextMenu)
+function rebuildTrayMenu() {
+  tray?.setContextMenu(buildTrayMenu())
+}
+
+// Toggle "English symbols in Chinese IME mode" globally:
+// persists the setting, enables/disables the keyboard hook, syncs tray + UI
+function setEnglishSymbolsEnabled(enabled: boolean) {
+  settingsStore?.setEnglishSymbols(enabled)
+  imeHook.setEnabled(enabled)
+  rebuildTrayMenu()
+  mainWindow?.webContents.send('english-symbols-updated', enabled)
+}
+
+function createTray() {
+  const icon = createTrayIcon()
+  tray = new Tray(icon)
+  tray.setToolTip('Clipboard Vibe')
+
+  tray.setContextMenu(buildTrayMenu())
   tray.on('click', () => toggleWindow())
 }
 
@@ -535,18 +559,42 @@ function registerIpcHandlers() {
     return true
   })
 
+  ipcMain.handle('token:get-refresh-interval', () => {
+    return settingsStore?.getTokenRefreshInterval() || 0
+  })
+
+  ipcMain.handle('token:set-refresh-interval', (_event, minutes: number) => {
+    const success = settingsStore?.setTokenRefreshInterval(minutes)
+    if (success) {
+      startTokenAutoRefresh(minutes)
+      return true
+    }
+    return false
+  })
+
   // ─── Auto Typing Handlers ────────────────────────────────
 
   ipcMain.handle('typing:get-status', () => {
     return typingManager.getStatus()
   })
 
-  ipcMain.handle('typing:start', (_event, text: string, delay: number, interval: number) => {
-    return typingManager.startTyping(text, delay, interval)
+  ipcMain.handle('typing:start', (_event, text: string, delay: number, interval: number, useEnglishSymbols: boolean) => {
+    return typingManager.startTyping(text, delay, interval, !!useEnglishSymbols)
   })
 
   ipcMain.handle('typing:stop', () => {
     return typingManager.stopTyping()
+  })
+
+  // ─── IME English Symbols (global keyboard hook) ────────────────
+
+  ipcMain.handle('ime:get-english-symbols', () => {
+    return settingsStore?.getEnglishSymbols() || false
+  })
+
+  ipcMain.handle('ime:set-english-symbols', (_event, enabled: boolean) => {
+    setEnglishSymbolsEnabled(!!enabled)
+    return true
   })
 }
 
@@ -586,6 +634,25 @@ function updateTokenTrayTooltip() {
     tray.setToolTip(`Clipboard Vibe  |  Token: ¥${totalCny.toFixed(2)} (${availableCount}/${keys.length})`)
   } else {
     tray.setToolTip('Clipboard Vibe')
+  }
+}
+
+// ─── Token Auto Refresh ────────────────────────────────
+
+function startTokenAutoRefresh(minutes: number) {
+  stopTokenAutoRefresh()
+  if (minutes <= 0) return
+
+  const intervalMs = minutes * 60 * 1000
+  tokenAutoRefreshTimer = setInterval(() => {
+    refreshAllTokenBalances()
+  }, intervalMs)
+}
+
+function stopTokenAutoRefresh() {
+  if (tokenAutoRefreshTimer) {
+    clearInterval(tokenAutoRefreshTimer)
+    tokenAutoRefreshTimer = null
   }
 }
 
@@ -638,6 +705,17 @@ app.whenReady().then(async () => {
   // Refresh token balances on startup (in background)
   refreshAllTokenBalances()
 
+  // Restore English symbols hook if enabled
+  if (settingsStore.getEnglishSymbols()) {
+    imeHook.setEnabled(true)
+  }
+
+  // Start token auto-refresh if configured
+  const refreshInterval = settingsStore.getTokenRefreshInterval()
+  if (refreshInterval > 0) {
+    startTokenAutoRefresh(refreshInterval)
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -653,4 +731,5 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  imeHook.stop()
 })

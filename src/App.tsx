@@ -113,11 +113,13 @@ function App() {
   const [tokenLoading, setTokenLoading] = useState(false)
   const [tokenToast, setTokenToast] = useState<{ msg: string; type: string } | null>(null)
   const tokenToastTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const [tokenRefreshInterval, setTokenRefreshInterval] = useState(0) // 0 = off
 
   // ─── Auto Typing State ────────────────────────────────
   const [typingText, setTypingText] = useState('')
   const [typingDelay, setTypingDelay] = useState(3)
   const [typingInterval, setTypingInterval] = useState(15)
+  const [typingEnglishSymbols, setTypingEnglishSymbols] = useState(false)
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({
     isRunning: false,
     status: '就绪',
@@ -172,9 +174,11 @@ function App() {
       Promise.all([
         window.tokenApi.getPlatforms(),
         window.tokenApi.getKeys(),
-      ]).then(([plats, keys]) => {
+        window.tokenApi.getRefreshInterval(),
+      ]).then(([plats, keys, interval]) => {
         setTokenPlatforms(plats)
         setTokenKeys(keys)
+        setTokenRefreshInterval(interval)
         if (plats.length > 0) {
           setSelectedTokenPlatform(plats[0].id)
         }
@@ -214,6 +218,16 @@ function App() {
     if (window.typingApi) {
       window.typingApi.onStatusUpdated((status) => {
         setTypingStatus(status)
+      })
+    }
+  }, [])
+
+  // Load english symbols setting and follow external changes (e.g. tray menu)
+  useEffect(() => {
+    if (window.imeApi) {
+      window.imeApi.getEnglishSymbols().then(setTypingEnglishSymbols)
+      window.imeApi.onEnglishSymbolsUpdated((enabled) => {
+        setTypingEnglishSymbols(enabled)
       })
     }
   }, [])
@@ -518,6 +532,39 @@ function App() {
     window.tokenApi?.openRecharge(platformId)
   }, [])
 
+  const handleSetRefreshInterval = useCallback(async (minutes: number) => {
+    try {
+      const success = await window.tokenApi?.setRefreshInterval(minutes)
+      if (success) {
+        setTokenRefreshInterval(minutes)
+        showTokenToast(
+          minutes === 0 ? '已关闭自动刷新' : `自动刷新已设置为每 ${formatIntervalLabel(minutes)}`,
+          'success'
+        )
+      }
+    } catch (e) {
+      showTokenToast('设置失败', 'error')
+    }
+  }, [showTokenToast])
+
+  const REFRESH_OPTIONS = [
+    { value: 0, label: '关闭' },
+    { value: 1, label: '1 分钟' },
+    { value: 5, label: '5 分钟' },
+    { value: 15, label: '15 分钟' },
+    { value: 30, label: '30 分钟' },
+    { value: 60, label: '1 小时' },
+    { value: 180, label: '3 小时' },
+    { value: 360, label: '6 小时' },
+    { value: 720, label: '12 小时' },
+    { value: 1440, label: '24 小时' },
+  ]
+
+  const formatIntervalLabel = (minutes: number): string => {
+    const opt = REFRESH_OPTIONS.find(o => o.value === minutes)
+    return opt?.label || '关闭'
+  }
+
   const getPlatformIcon = (platformId: string): string => {
     const icons: Record<string, string> = {
       deepseek: '🧠',
@@ -562,12 +609,13 @@ function App() {
     const result = await window.typingApi.start(
       typingText,
       typingDelay,
-      typingInterval / 1000
+      typingInterval / 1000,
+      typingEnglishSymbols
     )
     if (!result.success) {
       alert(result.message)
     }
-  }, [typingText, typingDelay, typingInterval])
+  }, [typingText, typingDelay, typingInterval, typingEnglishSymbols])
 
   const handleStopTyping = useCallback(async () => {
     if (!window.typingApi) return
@@ -589,6 +637,13 @@ function App() {
 
   const setTypingSpeed = useCallback((ms: number) => {
     setTypingInterval(ms)
+  }, [])
+
+  const toggleEnglishSymbols = useCallback((enabled: boolean) => {
+    setTypingEnglishSymbols(enabled)
+    if (window.imeApi) {
+      window.imeApi.setEnglishSymbols(enabled)
+    }
   }, [])
 
   const isSettingsTab = activeTab === 'settings'
@@ -907,13 +962,6 @@ function App() {
           <div className="token-add-section">
             <div className="token-section-header">
               <h3>添加 API Key</h3>
-              <button
-                className="icon-btn"
-                onClick={handleRefreshAllTokens}
-                title="刷新所有余额"
-              >
-                🔄
-              </button>
             </div>
 
             <div className="token-form-row">
@@ -1015,6 +1063,27 @@ function App() {
           <div className="token-list-section">
             <div className="token-section-header">
               <h3>余额监控</h3>
+              <div className="token-auto-refresh">
+                <select
+                  className="token-refresh-select"
+                  value={tokenRefreshInterval}
+                  onChange={(e) => handleSetRefreshInterval(Number(e.target.value))}
+                  title="自动刷新频率"
+                >
+                  {REFRESH_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.value === 0 ? '⏸ 自动刷新' : `🔄 每 ${opt.label}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="icon-btn"
+                  onClick={handleRefreshAllTokens}
+                  title="立即刷新所有余额"
+                >
+                  🔄
+                </button>
+              </div>
             </div>
 
             {tokenKeys.length === 0 ? (
@@ -1158,6 +1227,22 @@ function App() {
                   disabled={typingStatus.isRunning}
                 >极速</button>
               </div>
+            </div>
+            <div className="typing-setting-item full">
+              <div className="typing-toggle-row">
+                <label className="typing-setting-label">中文模式下使用英文符号</label>
+                <button
+                  className={`typing-toggle ${typingEnglishSymbols ? 'on' : ''}`}
+                  onClick={() => toggleEnglishSymbols(!typingEnglishSymbols)}
+                  title="全局生效：开启后，在任何应用中打字，标点都会保持英文半角（绕过输入法转换）"
+                >
+                  <span className="typing-toggle-knob" />
+                </button>
+                <span className={`typing-toggle-state ${typingEnglishSymbols ? 'on' : ''}`}>
+                  {typingEnglishSymbols ? '已开启' : '已关闭'}
+                </span>
+              </div>
+              <div className="typing-setting-hint">作用于系统输入法：开启后手动打字时 , . ? 等标点保持英文半角，托盘菜单也可切换</div>
             </div>
           </div>
 

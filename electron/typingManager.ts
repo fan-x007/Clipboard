@@ -52,7 +52,7 @@ class TypingManager {
     return path.join(__dirname, '../scripts/typer.ps1')
   }
 
-  startTyping(text: string, delay: number, interval: number): { success: boolean; message: string } {
+  startTyping(text: string, delay: number, interval: number, useEnglishSymbols: boolean = false): { success: boolean; message: string } {
     if (this.isRunning) {
       return { success: false, message: '正在打字中，请先停止' }
     }
@@ -87,6 +87,7 @@ class TypingManager {
         String(delayMs),
         String(intervalMs),
         tempFile,
+        useEnglishSymbols ? 'true' : 'false',
       ],
       {
         windowsHide: true,
