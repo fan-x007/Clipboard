@@ -20,6 +20,7 @@ export interface AppSettings {
   maxHistory: number
   maxFiles: number
   filesDir: string
+  inlineTranslateLimit?: number
 }
 
 // ─── Token Balance Types ────────────────────────────────────
@@ -63,6 +64,58 @@ export interface TokenPlatformInfo {
   note?: string
 }
 
+// ─── Rapid Consumption Alert Types ──────────────────────────
+
+export interface TokenAlertRule {
+  id: string
+  name: string
+  windowMinutes: number
+  threshold: number
+  enabled: boolean
+  createdAt: number
+  lastTriggeredAt?: number
+}
+
+export interface AlertRuleStatus extends TokenAlertRule {
+  consumed: number
+}
+
+export interface ConsumptionAlertEvent {
+  kind: 'consumption'
+  ruleId: string
+  ruleName: string
+  windowMinutes: number
+  threshold: number
+  consumed: number
+  triggeredAt: number
+}
+
+export interface ReminderAlertEvent {
+  kind: 'reminder'
+  reminderId: string
+  title: string
+  note: string
+  scheduledAt: number
+  triggeredAt: number
+}
+
+export type AlertEvent = ConsumptionAlertEvent | ReminderAlertEvent
+
+// ─── Scheduled Reminder Types ──────────────────────────────
+
+export type ReminderRepeat = 'none' | 'daily' | 'weekly'
+
+export interface Reminder {
+  id: string
+  title: string
+  note: string
+  time: number
+  repeat: ReminderRepeat
+  enabled: boolean
+  createdAt: number
+  lastTriggeredAt?: number
+}
+
 // ─── Auto Typing Types ──────────────────────────────────────
 
 export interface TypingStatus {
@@ -95,6 +148,7 @@ declare global {
       setFilesDirectory: (dir: string) => Promise<boolean>
       getFilesDirectory: () => Promise<string>
       resetFilesDirectory: () => Promise<boolean>
+      setInlineTranslateLimit: (limit: number) => Promise<boolean>
     }
     tokenApi: {
       getPlatforms: () => Promise<TokenPlatformInfo[]>
@@ -109,6 +163,28 @@ declare global {
       onKeysUpdated: (callback: (keys: TokenKeyConfig[]) => void) => void
       onShowTokenBalance: (callback: () => void) => void
     }
+    alertApi: {
+      getRules: () => Promise<TokenAlertRule[]>
+      getStatus: () => Promise<AlertRuleStatus[]>
+      addRule: (input: { name?: string; windowMinutes: number; threshold: number }) => Promise<TokenAlertRule[]>
+      deleteRule: (id: string) => Promise<TokenAlertRule[]>
+      toggleRule: (id: string, enabled: boolean) => Promise<TokenAlertRule[]>
+      testAlert: () => Promise<boolean>
+      getEvents: () => Promise<AlertEvent[]>
+      close: () => Promise<boolean>
+      openTokenPanel: () => Promise<boolean>
+      onRulesUpdated: (callback: (rules: TokenAlertRule[]) => void) => void
+      onAlerts: (callback: (events: AlertEvent[]) => void) => void
+    }
+    reminderApi: {
+      getAll: () => Promise<Reminder[]>
+      add: (input: { title: string; note?: string; time: number; repeat?: ReminderRepeat }) => Promise<Reminder[]>
+      update: (id: string, patch: Partial<Reminder>) => Promise<Reminder[]>
+      remove: (id: string) => Promise<Reminder[]>
+      toggle: (id: string, enabled: boolean) => Promise<Reminder[]>
+      test: () => Promise<boolean>
+      onUpdated: (callback: (reminders: Reminder[]) => void) => void
+    }
     typingApi: {
       getStatus: () => Promise<TypingStatus>
       start: (text: string, delay: number, interval: number, useEnglishSymbols?: boolean) => Promise<{ success: boolean; message: string }>
@@ -119,6 +195,25 @@ declare global {
       getEnglishSymbols: () => Promise<boolean>
       setEnglishSymbols: (enabled: boolean) => Promise<boolean>
       onEnglishSymbolsUpdated: (callback: (enabled: boolean) => void) => void
+    }
+    acceleratorApi: {
+      getStatus: () => Promise<{ github: boolean; steam: boolean }>
+      setEnabled: (service: 'github' | 'steam', enabled: boolean) => Promise<{ success: boolean; message: string }>
+    }
+    translateApi: {
+      run: (text: string, target: 'en' | 'zh') => Promise<{ success: boolean; text?: string; error?: string }>
+      getConfig: () => Promise<{
+        apiUrl: string
+        apiKey: string
+        model: string
+        profiles?: { name: string; apiUrl: string; apiKey: string; model: string }[]
+      }>
+      setConfig: (config: { apiUrl: string; apiKey: string; model: string }) => Promise<boolean>
+      setProfiles: (
+        profiles: { name: string; apiUrl: string; apiKey: string; model: string }[],
+        activeName?: string
+      ) => Promise<boolean>
+      test: (config: { apiUrl: string; apiKey: string; model: string }) => Promise<{ success: boolean; text?: string; error?: string }>
     }
   }
 }

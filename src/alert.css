@@ -1,0 +1,291 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #f3f4f6;
+  user-select: none;
+}
+
+.alert-shell {
+  width: 100vw;
+  height: 100vh;
+  padding: 10px;
+}
+
+.alert-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(38, 20, 24, 0.97), rgba(22, 18, 26, 0.98));
+  border: 1px solid rgba(255, 116, 86, 0.45);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.55),
+    0 0 30px rgba(255, 88, 60, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  -webkit-app-region: drag;
+}
+
+.alert-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 74, 48, 0.12), transparent);
+}
+
+.alert-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  border-radius: 12px;
+  background: radial-gradient(circle at 30% 25%, rgba(255, 140, 110, 0.35), rgba(255, 60, 40, 0.18));
+  border: 1px solid rgba(255, 120, 90, 0.45);
+  box-shadow: 0 0 18px rgba(255, 80, 50, 0.25);
+}
+
+.alert-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #ffd9d0;
+}
+
+.alert-subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: rgba(255, 220, 210, 0.6);
+}
+
+.alert-count {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffd0c4;
+  background: rgba(255, 90, 60, 0.18);
+  border: 1px solid rgba(255, 120, 90, 0.35);
+}
+
+.alert-events {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.alert-events::-webkit-scrollbar {
+  width: 6px;
+}
+
+.alert-events::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+}
+
+.alert-event {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.alert-event-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.alert-event-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fdf2ef;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-event-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.alert-event-amount {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.alert-event-amount .consumed {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ff8f70;
+  letter-spacing: 0.5px;
+}
+
+.alert-event-amount .label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.alert-event-meta {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.alert-event.reminder {
+  border-left: 2px solid rgba(255, 176, 96, 0.55);
+}
+
+.alert-reminder-note {
+  margin-top: 8px;
+  max-height: 110px;
+  overflow-y: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.74);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.alert-reminder-note::-webkit-scrollbar {
+  width: 5px;
+}
+
+.alert-reminder-note::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+}
+
+.alert-progress {
+  margin-top: 9px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.alert-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff9a5a, #ff4d4f);
+  box-shadow: 0 0 10px rgba(255, 90, 60, 0.5);
+}
+
+.alert-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.alert-footer {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.18);
+  -webkit-app-region: no-drag;
+}
+
+/* Reminder popups place the acknowledge button at a random spot inside this zone. */
+.alert-close-zone {
+  position: relative;
+  flex: 0 0 auto;
+  height: 112px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.18);
+  -webkit-app-region: no-drag;
+}
+
+.alert-close-zone .alert-btn {
+  position: absolute;
+  flex: none;
+  width: 160px;
+}
+
+.alert-close-zone .alert-btn.secondary {
+  left: 16px;
+  bottom: 14px;
+  width: 132px;
+}
+
+.alert-btn {
+  flex: 1;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease, border-color 0.12s ease;
+}
+
+.alert-btn:active {
+  transform: scale(0.98);
+}
+
+.alert-btn.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.alert-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.alert-btn.primary {
+  background: linear-gradient(135deg, #ff7a4d, #ff4d4f);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(255, 77, 79, 0.28);
+}
+
+.alert-btn.primary:hover {
+  filter: brightness(1.08);
+}
+
+.alert-tip {
+  padding: 0 16px 12px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.38);
+  text-align: center;
+  -webkit-app-region: no-drag;
+}

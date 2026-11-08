@@ -38,3 +38,6 @@ Thumbs.db
 # Local launch scripts (contain personal paths)
 _run.bat
 Clipboard Vibe.vbs
+
+# Trae share/preview temp artifacts
+.trae-html-share-packages/

@@ -5,8 +5,14 @@ import { execSync } from 'child_process'
 import { ClipboardStore, SettingsStore } from './store'
 import { TokenStore, PlatformInfo } from './tokenStore'
 import { loadPlatforms, getBalance, getSupportedPlatforms } from './tokenPlatforms'
+import { TokenAlertManager, TokenAlertRule, clampWindow } from './tokenAlerts'
+import type { AlertEvent } from './alertTypes'
+import { ReminderManager, Reminder, normalizeReminder } from './reminders'
 import { typingManager } from './typingManager'
 import { imeHook } from './imeHook'
+import { acceleratorManager } from './accelerator'
+import { translateText, testConnection } from './translator'
+import type { TranslateProfile } from './store'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -14,6 +20,10 @@ let store: ClipboardStore | null = null
 let settingsStore: SettingsStore | null = null
 let tokenStore: TokenStore | null = null
 let tokenPlatforms: PlatformInfo[] = []
+let tokenAlerts: TokenAlertManager | null = null
+let reminderManager: ReminderManager | null = null
+let alertWindow: BrowserWindow | null = null
+let pendingAlertEvents: AlertEvent[] = []
 let isWatching = false
 let lastText = ''
 let lastFilePaths: string[] = []
@@ -513,6 +523,7 @@ function registerIpcHandlers() {
       tokenStore.setBalance(keyConfig.id, { success: false, error: (e as Error).message })
     }
 
+    captureAndEvaluateAlerts()
     mainWindow?.webContents.send('token:keys-updated', tokenStore.getKeys())
     updateTokenTrayTooltip()
     return tokenStore.getKey(keyConfig.id)
@@ -541,6 +552,7 @@ function registerIpcHandlers() {
       tokenStore.setBalance(id, { success: false, error: (e as Error).message })
     }
 
+    captureAndEvaluateAlerts()
     mainWindow?.webContents.send('token:keys-updated', tokenStore.getKeys())
     updateTokenTrayTooltip()
     return tokenStore.getKey(id)
@@ -572,6 +584,175 @@ function registerIpcHandlers() {
     return false
   })
 
+  // ─── Rapid Consumption Alert Handlers ──────────────────────
+
+  ipcMain.handle('alert:get-rules', () => {
+    return settingsStore?.getTokenAlertRules() || []
+  })
+
+  ipcMain.handle('alert:get-status', () => {
+    const rules = settingsStore?.getTokenAlertRules() || []
+    if (!tokenAlerts) return rules.map(r => ({ ...r, consumed: 0 }))
+    return tokenAlerts.getStatus(rules)
+  })
+
+  ipcMain.handle(
+    'alert:add-rule',
+    (_event, input: { name?: string; windowMinutes: number; threshold: number }) => {
+      if (!settingsStore) return []
+      const rules = settingsStore.getTokenAlertRules()
+      const threshold = Number(input?.threshold)
+      if (!Number.isFinite(threshold) || threshold <= 0) return rules
+
+      const rule: TokenAlertRule = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 9),
+        name: String(input?.name || '').trim() || `消耗预警 ${rules.length + 1}`,
+        windowMinutes: clampWindow(Number(input?.windowMinutes)),
+        threshold: Math.round(threshold * 100) / 100,
+        enabled: true,
+        createdAt: Date.now(),
+      }
+      rules.push(rule)
+      settingsStore.setTokenAlertRules(rules)
+      notifyAlertRulesUpdated()
+      processTokenAlerts()
+      return settingsStore.getTokenAlertRules()
+    }
+  )
+
+  ipcMain.handle('alert:delete-rule', (_event, id: string) => {
+    if (!settingsStore) return []
+    const rules = settingsStore.getTokenAlertRules().filter(r => r.id !== id)
+    settingsStore.setTokenAlertRules(rules)
+    notifyAlertRulesUpdated()
+    return settingsStore.getTokenAlertRules()
+  })
+
+  ipcMain.handle('alert:toggle-rule', (_event, id: string, enabled: boolean) => {
+    if (!settingsStore) return []
+    const rules = settingsStore.getTokenAlertRules().map(r =>
+      r.id === id ? { ...r, enabled: !!enabled } : r
+    )
+    settingsStore.setTokenAlertRules(rules)
+    notifyAlertRulesUpdated()
+    if (enabled) processTokenAlerts()
+    return settingsStore.getTokenAlertRules()
+  })
+
+  ipcMain.handle('alert:test', () => {
+    const rules = settingsStore?.getTokenAlertRules() || []
+    const enabledRule = rules.find(r => r.enabled) || rules[0]
+    const windowMinutes = enabledRule ? enabledRule.windowMinutes : 60
+    const threshold = enabledRule && enabledRule.threshold > 0 ? enabledRule.threshold : 10
+    const consumed = tokenAlerts?.getConsumption(windowMinutes).total || 0
+
+    showAlertPopup([{
+      kind: 'consumption',
+      ruleId: enabledRule ? enabledRule.id : 'test',
+      ruleName: enabledRule ? enabledRule.name : '示例预警',
+      windowMinutes,
+      threshold,
+      consumed: Math.max(consumed, threshold * 1.2),
+      triggeredAt: Date.now(),
+    }])
+    return true
+  })
+
+  // ─── Scheduled Reminder Handlers ──────────────────────────
+
+  ipcMain.handle('reminder:get-all', () => {
+    return settingsStore?.getReminders() || []
+  })
+
+  ipcMain.handle(
+    'reminder:add',
+    (_event, input: { title: string; note?: string; time: number; repeat?: string }) => {
+      if (!settingsStore) return []
+      const reminder = normalizeReminder({
+        title: input?.title,
+        note: input?.note,
+        time: input?.time,
+        repeat: input?.repeat as Reminder['repeat'],
+        enabled: true,
+        createdAt: Date.now(),
+      })
+      if (!reminder) return settingsStore.getReminders()
+
+      // Recurring reminders only carry a time of day from the UI; make sure the
+      // stored occurrence is the next one in the future even if it arrived late.
+      if (reminder.repeat !== 'none') {
+        const stepDays = reminder.repeat === 'daily' ? 1 : 7
+        const next = new Date(reminder.time)
+        while (next.getTime() <= Date.now()) {
+          next.setDate(next.getDate() + stepDays)
+        }
+        reminder.time = next.getTime()
+      }
+
+      const reminders = settingsStore.getReminders()
+      reminders.push(reminder)
+      settingsStore.setReminders(reminders)
+      notifyRemindersUpdated()
+      reminderManager?.check()
+      return settingsStore.getReminders()
+    }
+  )
+
+  ipcMain.handle('reminder:update', (_event, id: string, patch: Partial<Reminder>) => {
+    if (!settingsStore) return []
+    const reminders = settingsStore.getReminders().map(r => {
+      if (r.id !== id) return r
+      const merged = normalizeReminder({ ...r, ...patch, id: r.id, createdAt: r.createdAt })
+      return merged || r
+    })
+    settingsStore.setReminders(reminders)
+    notifyRemindersUpdated()
+    reminderManager?.check()
+    return settingsStore.getReminders()
+  })
+
+  ipcMain.handle('reminder:delete', (_event, id: string) => {
+    if (!settingsStore) return []
+    settingsStore.setReminders(settingsStore.getReminders().filter(r => r.id !== id))
+    notifyRemindersUpdated()
+    return settingsStore.getReminders()
+  })
+
+  ipcMain.handle('reminder:toggle', (_event, id: string, enabled: boolean) => {
+    if (!settingsStore) return []
+    settingsStore.setReminders(
+      settingsStore.getReminders().map(r => (r.id === id ? { ...r, enabled: !!enabled } : r))
+    )
+    notifyRemindersUpdated()
+    if (enabled) reminderManager?.check()
+    return settingsStore.getReminders()
+  })
+
+  ipcMain.handle('reminder:test', () => {
+    showAlertPopup([{
+      kind: 'reminder',
+      reminderId: 'test',
+      title: '示例提醒',
+      note: '这是一条定时提醒的预览效果，到时间后会像这样强制弹出。',
+      scheduledAt: Date.now(),
+      triggeredAt: Date.now(),
+    }])
+    return true
+  })
+
+  ipcMain.handle('alert:get-events', () => pendingAlertEvents)
+
+  ipcMain.handle('alert:close', () => {
+    alertWindow?.close()
+    return true
+  })
+
+  ipcMain.handle('alert:open-token-panel', () => {
+    alertWindow?.close()
+    showMainWindowOnTokenTab()
+    return true
+  })
+
   // ─── Auto Typing Handlers ────────────────────────────────
 
   ipcMain.handle('typing:get-status', () => {
@@ -595,6 +776,68 @@ function registerIpcHandlers() {
   ipcMain.handle('ime:set-english-symbols', (_event, enabled: boolean) => {
     setEnglishSymbolsEnabled(!!enabled)
     return true
+  })
+
+  // ─── Website Accelerator (hosts-based) ────────────────
+
+  ipcMain.handle('accelerator:get-status', () => {
+    return acceleratorManager.getStatus()
+  })
+
+  ipcMain.handle('accelerator:set', (_event, service: string, enabled: boolean) => {
+    if (service !== 'github' && service !== 'steam') {
+      return { success: false, message: '未知服务' }
+    }
+    return acceleratorManager.setEnabled(service, enabled)
+  })
+
+  // ─── Translation (LLM-powered) ─────────────────────────
+
+  ipcMain.handle('translate:run', async (_event, text: string, target: string) => {
+    const targetLang = target === 'zh' ? 'zh' : 'en'
+    return translateText(String(text || ''), targetLang, {
+      apiUrl: settingsStore!.getTranslateApiUrl(),
+      apiKey: settingsStore!.getTranslateApiKey(),
+      model: settingsStore!.getTranslateModel(),
+    })
+  })
+
+  ipcMain.handle('translate:get-config', () => {
+    return {
+      apiUrl: settingsStore!.getTranslateApiUrl(),
+      apiKey: settingsStore!.getTranslateApiKey(),
+      model: settingsStore!.getTranslateModel(),
+      profiles: settingsStore!.getTranslateProfiles(),
+    }
+  })
+
+  ipcMain.handle(
+    'translate:set-config',
+    (_event, config: { apiUrl: string; apiKey: string; model: string }) => {
+      return settingsStore!.setTranslateConfig(config.apiUrl || '', config.apiKey || '', config.model || '')
+    }
+  )
+
+  ipcMain.handle(
+    'translate:set-profiles',
+    (_event, profiles: unknown, activeName?: string) => {
+      return settingsStore!.setTranslateProfiles(
+        Array.isArray(profiles) ? (profiles as TranslateProfile[]) : [],
+        activeName || undefined
+      )
+    }
+  )
+
+  ipcMain.handle('set-inline-translate-limit', (_event, limit: number) => {
+    return settingsStore!.setInlineTranslateLimit(Number(limit) || 0)
+  })
+
+  ipcMain.handle('translate:test', (_event, config: { apiUrl: string; apiKey: string; model: string }) => {
+    return testConnection({
+      apiUrl: String(config?.apiUrl || '').trim(),
+      apiKey: String(config?.apiKey || '').trim(),
+      model: String(config?.model || '').trim(),
+    })
   })
 }
 
@@ -621,6 +864,103 @@ async function refreshAllTokenBalances() {
   }
   mainWindow?.webContents.send('token:keys-updated', tokenStore.getKeys())
   updateTokenTrayTooltip()
+  captureAndEvaluateAlerts()
+}
+
+// ─── Rapid Consumption Alerts ────────────────────────────────
+
+function captureAndEvaluateAlerts() {
+  if (!tokenStore) return
+  tokenAlerts?.record(tokenStore.getKeys())
+  processTokenAlerts()
+}
+
+function processTokenAlerts() {
+  if (!tokenAlerts || !settingsStore) return
+  const rules = settingsStore.getTokenAlertRules()
+  if (rules.length === 0) return
+
+  const { events, updatedRules } = tokenAlerts.evaluate(rules)
+  if (events.length > 0) {
+    if (updatedRules !== rules) {
+      settingsStore.setTokenAlertRules(updatedRules)
+      notifyAlertRulesUpdated()
+    }
+    showAlertPopup(events)
+  }
+}
+
+function notifyAlertRulesUpdated() {
+  const rules = settingsStore?.getTokenAlertRules() || []
+  mainWindow?.webContents.send('alert:rules-updated', rules)
+}
+
+function notifyRemindersUpdated() {
+  const reminders = settingsStore?.getReminders() || []
+  mainWindow?.webContents.send('reminder:updated', reminders)
+}
+
+function showMainWindowOnTokenTab() {
+  if (!mainWindow) return
+  if (!mainWindow.isVisible()) {
+    mainWindow.show()
+  }
+  mainWindow.focus()
+  mainWindow.webContents.send('show-token-balance')
+}
+
+/** Forced, always-on-top alert popup. Multiple events are shown in one page. */
+function showAlertPopup(events: AlertEvent[]) {
+  if (events.length === 0) return
+  pendingAlertEvents.push(...events)
+
+  if (alertWindow && !alertWindow.isDestroyed()) {
+    alertWindow.webContents.send('alert:data', pendingAlertEvents)
+    alertWindow.setAlwaysOnTop(true, 'screen-saver')
+    alertWindow.show()
+    alertWindow.focus()
+    return
+  }
+
+  alertWindow = new BrowserWindow({
+    width: 470,
+    height: 480,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    show: false,
+    center: true,
+    icon: getAppIconPath(),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  // Keep the alert above full-screen apps until the user acknowledges it.
+  alertWindow.setAlwaysOnTop(true, 'screen-saver')
+  alertWindow.loadFile(path.join(__dirname, '../dist/alert.html'))
+
+  alertWindow.webContents.on('did-finish-load', () => {
+    if (!alertWindow) return
+    alertWindow.webContents.send('alert:data', pendingAlertEvents)
+    alertWindow.show()
+    alertWindow.focus()
+  })
+
+  alertWindow.on('blur', () => {
+    if (alertWindow && !alertWindow.isDestroyed()) {
+      alertWindow.setAlwaysOnTop(true, 'screen-saver')
+    }
+  })
+
+  alertWindow.on('closed', () => {
+    alertWindow = null
+    pendingAlertEvents = []
+  })
 }
 
 function updateTokenTrayTooltip() {
@@ -695,12 +1035,22 @@ app.whenReady().then(async () => {
   // Initialize token balance module
   tokenPlatforms = await loadPlatforms()
   tokenStore = new TokenStore()
+  tokenAlerts = new TokenAlertManager()
+
+  // Scheduled reminders: poll every 15s and force the alert popup when due
+  reminderManager = new ReminderManager(
+    () => settingsStore?.getReminders() || [],
+    reminders => settingsStore?.setReminders(reminders),
+    events => showAlertPopup(events)
+  )
 
   createWindow()
   createTray()
   registerIpcHandlers()
   registerShortcuts()
   startClipboardWatcher()
+
+  reminderManager.start()
 
   // Refresh token balances on startup (in background)
   refreshAllTokenBalances()

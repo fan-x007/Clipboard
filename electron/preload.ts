@@ -19,6 +19,7 @@ export interface AppSettings {
   maxHistory: number
   maxFiles: number
   filesDir: string
+  inlineTranslateLimit?: number
 }
 
 // ─── Token Balance Types ────────────────────────────────────
@@ -85,9 +86,41 @@ export const clipboardApi = {
   setFilesDirectory: (dir: string): Promise<boolean> => ipcRenderer.invoke('set-files-directory', dir),
   getFilesDirectory: (): Promise<string> => ipcRenderer.invoke('get-files-directory'),
   resetFilesDirectory: (): Promise<boolean> => ipcRenderer.invoke('reset-files-directory'),
+  setInlineTranslateLimit: (limit: number): Promise<boolean> =>
+    ipcRenderer.invoke('set-inline-translate-limit', limit),
 }
 
 // ─── Token Balance API ──────────────────────────────────────
+
+export interface TokenAlertRule {
+  id: string
+  name: string
+  windowMinutes: number
+  threshold: number
+  enabled: boolean
+  createdAt: number
+  lastTriggeredAt?: number
+}
+
+export interface AlertEvent {
+  kind: 'consumption' | 'reminder'
+  // consumption
+  ruleId?: string
+  ruleName?: string
+  windowMinutes?: number
+  threshold?: number
+  consumed?: number
+  triggeredAt: number
+  // reminder
+  reminderId?: string
+  title?: string
+  note?: string
+  scheduledAt?: number
+}
+
+export interface AlertRuleStatus extends TokenAlertRule {
+  consumed: number
+}
 
 export const tokenApi = {
   getPlatforms: (): Promise<TokenPlatformInfo[]> => ipcRenderer.invoke('token:get-platforms'),
@@ -111,6 +144,60 @@ export const tokenApi = {
 
   onShowTokenBalance: (callback: () => void) => {
     ipcRenderer.on('show-token-balance', () => callback())
+  },
+}
+
+// ─── Rapid Consumption Alert API ───────────────────────────
+
+export const alertApi = {
+  getRules: (): Promise<TokenAlertRule[]> => ipcRenderer.invoke('alert:get-rules'),
+  getStatus: (): Promise<AlertRuleStatus[]> => ipcRenderer.invoke('alert:get-status'),
+  addRule: (input: { name?: string; windowMinutes: number; threshold: number }): Promise<TokenAlertRule[]> =>
+    ipcRenderer.invoke('alert:add-rule', input),
+  deleteRule: (id: string): Promise<TokenAlertRule[]> => ipcRenderer.invoke('alert:delete-rule', id),
+  toggleRule: (id: string, enabled: boolean): Promise<TokenAlertRule[]> =>
+    ipcRenderer.invoke('alert:toggle-rule', id, enabled),
+  testAlert: (): Promise<boolean> => ipcRenderer.invoke('alert:test'),
+  getEvents: (): Promise<AlertEvent[]> => ipcRenderer.invoke('alert:get-events'),
+  close: (): Promise<boolean> => ipcRenderer.invoke('alert:close'),
+  openTokenPanel: (): Promise<boolean> => ipcRenderer.invoke('alert:open-token-panel'),
+
+  onRulesUpdated: (callback: (rules: TokenAlertRule[]) => void) => {
+    ipcRenderer.on('alert:rules-updated', (_event, rules) => callback(rules))
+  },
+  onAlerts: (callback: (events: AlertEvent[]) => void) => {
+    ipcRenderer.on('alert:data', (_event, events) => callback(events))
+  },
+}
+
+// ─── Scheduled Reminder API ────────────────────────────────
+
+export type ReminderRepeat = 'none' | 'daily' | 'weekly'
+
+export interface Reminder {
+  id: string
+  title: string
+  note: string
+  time: number
+  repeat: ReminderRepeat
+  enabled: boolean
+  createdAt: number
+  lastTriggeredAt?: number
+}
+
+export const reminderApi = {
+  getAll: (): Promise<Reminder[]> => ipcRenderer.invoke('reminder:get-all'),
+  add: (input: { title: string; note?: string; time: number; repeat?: ReminderRepeat }): Promise<Reminder[]> =>
+    ipcRenderer.invoke('reminder:add', input),
+  update: (id: string, patch: Partial<Reminder>): Promise<Reminder[]> =>
+    ipcRenderer.invoke('reminder:update', id, patch),
+  remove: (id: string): Promise<Reminder[]> => ipcRenderer.invoke('reminder:delete', id),
+  toggle: (id: string, enabled: boolean): Promise<Reminder[]> =>
+    ipcRenderer.invoke('reminder:toggle', id, enabled),
+  test: (): Promise<boolean> => ipcRenderer.invoke('reminder:test'),
+
+  onUpdated: (callback: (reminders: Reminder[]) => void) => {
+    ipcRenderer.on('reminder:updated', (_event, reminders) => callback(reminders))
   },
 }
 
@@ -146,7 +233,46 @@ export const imeApi = {
   },
 }
 
+// ─── Website Accelerator API ──────────────────────────────
+
+export const acceleratorApi = {
+  getStatus: (): Promise<{ github: boolean; steam: boolean }> => ipcRenderer.invoke('accelerator:get-status'),
+  setEnabled: (service: 'github' | 'steam', enabled: boolean): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('accelerator:set', service, enabled),
+}
+
+// ─── Translation API ──────────────────────────────────────
+
+export interface TranslateConfig {
+  apiUrl: string
+  apiKey: string
+  model: string
+  profiles?: TranslateProfile[]
+}
+
+export interface TranslateProfile {
+  name: string
+  apiUrl: string
+  apiKey: string
+  model: string
+}
+
+export const translateApi = {
+  run: (text: string, target: 'en' | 'zh'): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('translate:run', text, target),
+  getConfig: (): Promise<TranslateConfig> => ipcRenderer.invoke('translate:get-config'),
+  setConfig: (config: TranslateConfig): Promise<boolean> => ipcRenderer.invoke('translate:set-config', config),
+  setProfiles: (profiles: TranslateProfile[], activeName?: string): Promise<boolean> =>
+    ipcRenderer.invoke('translate:set-profiles', profiles, activeName),
+  test: (config: TranslateConfig): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('translate:test', config),
+}
+
 contextBridge.exposeInMainWorld('clipboardApi', clipboardApi)
 contextBridge.exposeInMainWorld('tokenApi', tokenApi)
+contextBridge.exposeInMainWorld('alertApi', alertApi)
+contextBridge.exposeInMainWorld('reminderApi', reminderApi)
 contextBridge.exposeInMainWorld('typingApi', typingApi)
 contextBridge.exposeInMainWorld('imeApi', imeApi)
+contextBridge.exposeInMainWorld('acceleratorApi', acceleratorApi)
+contextBridge.exposeInMainWorld('translateApi', translateApi)

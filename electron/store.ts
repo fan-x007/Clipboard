@@ -1,6 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
+import type { TokenAlertRule } from './tokenAlerts'
+import type { Reminder } from './reminders'
 
 export type ClipboardItemType = 'text' | 'file'
 
@@ -96,27 +98,11 @@ export class ClipboardStore {
     return { base: fullBaseName, startCounter: 1 }
   }
 
-  private copyFileToStorage(originalPath: string, id: string): string | null {
+  private copyFileToStorage(originalPath: string): string | null {
     try {
       const fileName = path.basename(originalPath)
-      const ext = path.extname(originalPath)
-      const fullBaseName = path.basename(originalPath, ext)
-
-      // Parse out any existing " (N)" suffix from the base name
-      const { base, startCounter } = this.parseNameAndCounter(fullBaseName)
-
-      // Try original name first
-      let storedName = fileName
-      let storedPath = path.join(this.filesDir, storedName)
-      let counter = startCounter
-
-      while (fs.existsSync(storedPath)) {
-        storedName = `${base} (${counter})${ext}`
-        storedPath = path.join(this.filesDir, storedName)
-        counter++
-      }
-
-      // Copy file
+      const storedPath = path.join(this.filesDir, fileName)
+      // Overwrite on name conflict: the latest copy wins
       fs.copyFileSync(originalPath, storedPath)
       return storedPath
     } catch (e) {
@@ -233,7 +219,7 @@ export class ClipboardStore {
       }
 
       const id = this.generateId()
-      const storedPath = this.copyFileToStorage(originalPath, id)
+      const storedPath = this.copyFileToStorage(originalPath)
       if (!storedPath) return null
 
       const storedFileName = path.basename(storedPath)
@@ -448,7 +434,21 @@ export interface AppSettings {
   maxFiles: number
   filesDir: string
   tokenRefreshInterval: number // in minutes, 0 = off
+  tokenAlertRules: TokenAlertRule[] // rapid consumption alert rules
+  reminders: Reminder[] // scheduled reminders
   englishSymbols: boolean // use English (half-width) symbols while typing in Chinese IME mode
+  translateApiUrl: string // OpenAI-compatible chat completions endpoint
+  translateApiKey: string
+  translateModel: string
+  translateProfiles: TranslateProfile[] // saved provider profiles (name + apiUrl + apiKey + model)
+  inlineTranslateLimit: number // history items shorter than this translate inline in the list (0 = always open panel)
+}
+
+export interface TranslateProfile {
+  name: string
+  apiUrl: string
+  apiKey: string
+  model: string
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -457,7 +457,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   maxFiles: 100,
   filesDir: '',
   tokenRefreshInterval: 0, // 0 = off
+  tokenAlertRules: [],
+  reminders: [],
   englishSymbols: false,
+  translateApiUrl: 'https://api.openai.com/v1/chat/completions',
+  translateApiKey: '',
+  translateModel: 'gpt-4o-mini',
+  translateProfiles: [],
+  inlineTranslateLimit: 20,
 }
 
 export class SettingsStore {
@@ -477,6 +484,20 @@ export class SettingsStore {
         const data = fs.readFileSync(this.filePath, 'utf-8')
         const parsed = JSON.parse(data)
         this.settings = { ...DEFAULT_SETTINGS, ...parsed }
+        // Migrate legacy translateModels list into provider profiles
+        const legacy = (parsed as { translateModels?: unknown }).translateModels
+        if (Array.isArray(legacy) && legacy.length > 0 && !(Array.isArray(this.settings.translateProfiles) && this.settings.translateProfiles.length > 0)) {
+          this.settings.translateProfiles = legacy
+            .map(m => String(m || '').trim())
+            .filter(m => m)
+            .map(m => ({
+              name: m,
+              apiUrl: this.settings.translateApiUrl,
+              apiKey: this.settings.translateApiKey,
+              model: m,
+            }))
+          this.save()
+        }
       }
     } catch (e) {
       console.error('Failed to load settings:', e)
@@ -560,6 +581,124 @@ export class SettingsStore {
     const validValues = [0, 1, 5, 15, 30, 60, 180, 360, 720, 1440]
     const clamped = validValues.includes(minutes) ? minutes : 0
     this.settings.tokenRefreshInterval = clamped
+    this.save()
+    return true
+  }
+
+  getTokenAlertRules(): TokenAlertRule[] {
+    const rules = Array.isArray(this.settings.tokenAlertRules) ? this.settings.tokenAlertRules : []
+    return rules
+      .filter(r => r && typeof r.id === 'string' && typeof r.name === 'string')
+      .map(r => ({
+        id: r.id,
+        name: r.name,
+        windowMinutes: Number(r.windowMinutes) || 60,
+        threshold: Number(r.threshold) || 0,
+        enabled: r.enabled !== false,
+        createdAt: Number(r.createdAt) || Date.now(),
+        lastTriggeredAt: Number(r.lastTriggeredAt) || undefined,
+      }))
+  }
+
+  setTokenAlertRules(rules: TokenAlertRule[]): boolean {
+    this.settings.tokenAlertRules = Array.isArray(rules) ? rules : []
+    this.save()
+    return true
+  }
+
+  getReminders(): Reminder[] {
+    const list = Array.isArray(this.settings.reminders) ? this.settings.reminders : []
+    return list.filter(r =>
+      r &&
+      typeof r.id === 'string' &&
+      typeof r.title === 'string' &&
+      Number.isFinite(r.time)
+    )
+  }
+
+  setReminders(reminders: Reminder[]): boolean {
+    this.settings.reminders = Array.isArray(reminders) ? reminders : []
+    this.save()
+    return true
+  }
+
+  getTranslateApiUrl(): string {
+    return this.settings.translateApiUrl || DEFAULT_SETTINGS.translateApiUrl
+  }
+
+  getTranslateApiKey(): string {
+    return this.settings.translateApiKey || ''
+  }
+
+  getTranslateModel(): string {
+    return this.settings.translateModel || DEFAULT_SETTINGS.translateModel
+  }
+
+  getTranslateProfiles(): TranslateProfile[] {
+    const list = (this.settings.translateProfiles || [])
+      .map(p => ({
+        name: String(p?.name || '').trim() || String(p?.model || '').trim(),
+        apiUrl: String(p?.apiUrl || '').trim(),
+        apiKey: String(p?.apiKey || '').trim(),
+        model: String(p?.model || '').trim(),
+      }))
+      .filter(p => p.name && p.model)
+    // Dedupe by name (keep the last occurrence)
+    const seen = new Map<string, TranslateProfile>()
+    list.forEach(p => seen.set(p.name, p))
+    return Array.from(seen.values())
+  }
+
+  /**
+   * Persist the profile list. When activeName matches a profile, that profile
+   * becomes the active translate config (apiUrl/apiKey/model).
+   */
+  setTranslateProfiles(profiles: TranslateProfile[], activeName?: string): boolean {
+    this.settings.translateProfiles = this.sanitizeProfiles(profiles)
+    if (activeName) {
+      const active = this.settings.translateProfiles.find(p => p.name === activeName)
+      if (active) {
+        this.settings.translateApiUrl = active.apiUrl || DEFAULT_SETTINGS.translateApiUrl
+        this.settings.translateApiKey = active.apiKey
+        this.settings.translateModel = active.model || DEFAULT_SETTINGS.translateModel
+      }
+    }
+    this.save()
+    return true
+  }
+
+  private sanitizeProfiles(profiles: TranslateProfile[]): TranslateProfile[] {
+    const list = (profiles || [])
+      .map(p => ({
+        name: String(p?.name || '').trim() || String(p?.model || '').trim(),
+        apiUrl: String(p?.apiUrl || '').trim(),
+        apiKey: String(p?.apiKey || '').trim(),
+        model: String(p?.model || '').trim(),
+      }))
+      .filter(p => p.name && p.model)
+    const seen = new Map<string, TranslateProfile>()
+    list.forEach(p => seen.set(p.name, p))
+    return Array.from(seen.values())
+  }
+
+  setTranslateConfig(apiUrl: string, apiKey: string, model: string): boolean {
+    this.settings.translateApiUrl = apiUrl.trim() || DEFAULT_SETTINGS.translateApiUrl
+    this.settings.translateApiKey = apiKey.trim()
+    this.settings.translateModel = model.trim() || DEFAULT_SETTINGS.translateModel
+    this.save()
+    return true
+  }
+
+  getInlineTranslateLimit(): number {
+    const n = Number(this.settings.inlineTranslateLimit)
+    return Number.isFinite(n) ? Math.max(0, Math.min(500, Math.floor(n))) : DEFAULT_SETTINGS.inlineTranslateLimit
+  }
+
+  setInlineTranslateLimit(limit: number): boolean {
+    const n = Number(limit)
+    this.settings.inlineTranslateLimit = Number.isFinite(n)
+      ? Math.max(0, Math.min(500, Math.floor(n)))
+      : DEFAULT_SETTINGS.inlineTranslateLimit
     this.save()
     return true
   }

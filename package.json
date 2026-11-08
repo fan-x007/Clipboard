@@ -42,6 +42,10 @@
       {
         "from": "scripts/hook.ps1",
         "to": "scripts/hook.ps1"
+      },
+      {
+        "from": "scripts/hosts-admin.ps1",
+        "to": "scripts/hosts-admin.ps1"
       }
     ],
     "win": {

@@ -5,7 +5,7 @@ param(
     [int]$delayMs = 3000,
     [int]$intervalMs = 15,
     [string]$textFile = "",
-    [bool]$useEnglishSymbols = $false
+    [string]$useEnglishSymbols = "false"
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -133,4 +133,4 @@ public class Typer {
 
 Add-Type -TypeDefinition $code -Language CSharp -ReferencedAssemblies System.Windows.Forms
 
-[Typer]::Run($delayMs, $intervalMs, $text, $useEnglishSymbols)
+[Typer]::Run($delayMs, $intervalMs, $text, ($useEnglishSymbols -eq 'true'))
