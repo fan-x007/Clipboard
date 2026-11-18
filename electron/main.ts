@@ -11,7 +11,7 @@ import { ReminderManager, Reminder, normalizeReminder } from './reminders'
 import { typingManager } from './typingManager'
 import { imeHook } from './imeHook'
 import { acceleratorManager } from './accelerator'
-import { translateText, testConnection } from './translator'
+import { translateText, explainText, testConnection } from './translator'
 import type { TranslateProfile } from './store'
 
 let mainWindow: BrowserWindow | null = null
@@ -430,6 +430,42 @@ function registerIpcHandlers() {
     return true
   })
 
+  ipcMain.handle('set-favorite-folder', (_event, id: string, folderId: string | undefined) => {
+    store?.setFavoriteFolder(id, folderId)
+    mainWindow?.webContents.send('history-updated', store?.getAll() || [])
+    return true
+  })
+
+  ipcMain.handle('favorite-folder:list', () => settingsStore?.getFavoriteFolders() || [])
+
+  ipcMain.handle('favorite-folder:create', (_event, name: string, emoji?: string) => {
+    const folder = settingsStore?.addFavoriteFolder(name, emoji)
+    mainWindow?.webContents.send('favorite-folders-updated', settingsStore?.getFavoriteFolders() || [])
+    return folder
+  })
+
+  ipcMain.handle('favorite-folder:rename', (_event, id: string, name: string) => {
+    const ok = settingsStore?.renameFavoriteFolder(id, name) || false
+    mainWindow?.webContents.send('favorite-folders-updated', settingsStore?.getFavoriteFolders() || [])
+    return ok
+  })
+
+  ipcMain.handle('favorite-folder:delete', (_event, id: string) => {
+    const ok = settingsStore?.deleteFavoriteFolder(id) || false
+    // Unassign items from the deleted folder
+    if (ok && store) {
+      const clipStore = store
+      clipStore.getAll().forEach(item => {
+        if (item.favorite && item.folderId === id) {
+          clipStore.setFavoriteFolder(item.id, undefined)
+        }
+      })
+    }
+    mainWindow?.webContents.send('favorite-folders-updated', settingsStore?.getFavoriteFolders() || [])
+    mainWindow?.webContents.send('history-updated', store?.getAll() || [])
+    return ok
+  })
+
   ipcMain.handle('hide-window', () => {
     mainWindow?.hide()
     return true
@@ -796,6 +832,14 @@ function registerIpcHandlers() {
   ipcMain.handle('translate:run', async (_event, text: string, target: string) => {
     const targetLang = target === 'zh' ? 'zh' : 'en'
     return translateText(String(text || ''), targetLang, {
+      apiUrl: settingsStore!.getTranslateApiUrl(),
+      apiKey: settingsStore!.getTranslateApiKey(),
+      model: settingsStore!.getTranslateModel(),
+    })
+  })
+
+  ipcMain.handle('translate:explain', async (_event, text: string) => {
+    return explainText(String(text || ''), {
       apiUrl: settingsStore!.getTranslateApiUrl(),
       apiKey: settingsStore!.getTranslateApiKey(),
       model: settingsStore!.getTranslateModel(),

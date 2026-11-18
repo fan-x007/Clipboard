@@ -13,6 +13,14 @@ export interface ClipboardItem {
   fileName?: string
   fileSize?: number
   storedPath?: string
+  folderId?: string
+}
+
+export interface FavoriteFolder {
+  id: string
+  name: string
+  emoji: string
+  createdAt: number
 }
 
 export interface AppSettings {
@@ -136,6 +144,12 @@ declare global {
       clearHistory: () => Promise<boolean>
       clearFavorites: () => Promise<boolean>
       toggleFavorite: (id: string) => Promise<boolean>
+      setFavoriteFolder: (id: string, folderId: string | undefined) => Promise<boolean>
+      listFavoriteFolders: () => Promise<FavoriteFolder[]>
+      createFavoriteFolder: (name: string, emoji?: string) => Promise<FavoriteFolder | null>
+      renameFavoriteFolder: (id: string, name: string) => Promise<boolean>
+      deleteFavoriteFolder: (id: string) => Promise<boolean>
+      onFavoriteFoldersUpdated: (callback: (folders: FavoriteFolder[]) => void) => void
       hideWindow: () => Promise<boolean>
       openFile: (id: string) => Promise<boolean>
       openFileLocation: (id: string) => Promise<boolean>
@@ -202,6 +216,7 @@ declare global {
     }
     translateApi: {
       run: (text: string, target: 'en' | 'zh') => Promise<{ success: boolean; text?: string; error?: string }>
+      explain: (text: string) => Promise<{ success: boolean; text?: string; error?: string }>
       getConfig: () => Promise<{
         apiUrl: string
         apiKey: string

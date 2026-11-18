@@ -12,6 +12,14 @@ export interface ClipboardItem {
   fileName?: string
   fileSize?: number
   storedPath?: string
+  folderId?: string
+}
+
+export interface FavoriteFolder {
+  id: string
+  name: string
+  emoji: string
+  createdAt: number
 }
 
 export interface AppSettings {
@@ -71,6 +79,17 @@ export const clipboardApi = {
   clearHistory: (): Promise<boolean> => ipcRenderer.invoke('clear-history'),
   clearFavorites: (): Promise<boolean> => ipcRenderer.invoke('clear-favorites'),
   toggleFavorite: (id: string): Promise<boolean> => ipcRenderer.invoke('toggle-favorite', id),
+  setFavoriteFolder: (id: string, folderId: string | undefined): Promise<boolean> =>
+    ipcRenderer.invoke('set-favorite-folder', id, folderId),
+  listFavoriteFolders: (): Promise<FavoriteFolder[]> => ipcRenderer.invoke('favorite-folder:list'),
+  createFavoriteFolder: (name: string, emoji?: string): Promise<FavoriteFolder | null> =>
+    ipcRenderer.invoke('favorite-folder:create', name, emoji),
+  renameFavoriteFolder: (id: string, name: string): Promise<boolean> =>
+    ipcRenderer.invoke('favorite-folder:rename', id, name),
+  deleteFavoriteFolder: (id: string): Promise<boolean> => ipcRenderer.invoke('favorite-folder:delete', id),
+  onFavoriteFoldersUpdated: (callback: (folders: FavoriteFolder[]) => void) => {
+    ipcRenderer.on('favorite-folders-updated', (_event, folders) => callback(folders))
+  },
   hideWindow: (): Promise<boolean> => ipcRenderer.invoke('hide-window'),
   openFile: (id: string): Promise<boolean> => ipcRenderer.invoke('open-file', id),
   openFileLocation: (id: string): Promise<boolean> => ipcRenderer.invoke('open-file-location', id),
@@ -260,6 +279,8 @@ export interface TranslateProfile {
 export const translateApi = {
   run: (text: string, target: 'en' | 'zh'): Promise<{ success: boolean; text?: string; error?: string }> =>
     ipcRenderer.invoke('translate:run', text, target),
+  explain: (text: string): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('translate:explain', text),
   getConfig: (): Promise<TranslateConfig> => ipcRenderer.invoke('translate:get-config'),
   setConfig: (config: TranslateConfig): Promise<boolean> => ipcRenderer.invoke('translate:set-config', config),
   setProfiles: (profiles: TranslateProfile[], activeName?: string): Promise<boolean> =>

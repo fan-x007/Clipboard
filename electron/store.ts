@@ -14,6 +14,7 @@ export interface ClipboardItem {
   timestamp: number
   favorite: boolean
   inHistory: boolean // whether to show in history (all tab)
+  folderId?: string // which favorite folder this item belongs to (only meaningful when favorite)
   // file-specific fields
   fileName?: string
   fileSize?: number
@@ -338,7 +339,18 @@ export class ClipboardStore {
           this.deleteStoredFile(item.storedPath)
         }
         this.items = this.items.filter(i => i.id !== id)
+      } else if (!item.favorite) {
+        // Keep the item in history but clear its folder assignment
+        item.folderId = undefined
       }
+      this.save()
+    }
+  }
+
+  setFavoriteFolder(id: string, folderId: string | undefined) {
+    const item = this.items.find(i => i.id === id)
+    if (item && item.favorite) {
+      item.folderId = folderId || undefined
       this.save()
     }
   }
@@ -436,6 +448,7 @@ export interface AppSettings {
   tokenRefreshInterval: number // in minutes, 0 = off
   tokenAlertRules: TokenAlertRule[] // rapid consumption alert rules
   reminders: Reminder[] // scheduled reminders
+  favoriteFolders: FavoriteFolder[] // user-defined favorite folders
   englishSymbols: boolean // use English (half-width) symbols while typing in Chinese IME mode
   translateApiUrl: string // OpenAI-compatible chat completions endpoint
   translateApiKey: string
@@ -451,6 +464,13 @@ export interface TranslateProfile {
   model: string
 }
 
+export interface FavoriteFolder {
+  id: string
+  name: string
+  emoji: string
+  createdAt: number
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   toggleShortcut: 'CommandOrControl+Shift+V',
   maxHistory: 200,
@@ -459,6 +479,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   tokenRefreshInterval: 0, // 0 = off
   tokenAlertRules: [],
   reminders: [],
+  favoriteFolders: [],
   englishSymbols: false,
   translateApiUrl: 'https://api.openai.com/v1/chat/completions',
   translateApiKey: '',
@@ -618,6 +639,63 @@ export class SettingsStore {
 
   setReminders(reminders: Reminder[]): boolean {
     this.settings.reminders = Array.isArray(reminders) ? reminders : []
+    this.save()
+    return true
+  }
+
+  // ─── Favorite Folder Management ───────────────────────────
+
+  getFavoriteFolders(): FavoriteFolder[] {
+    const list = Array.isArray(this.settings.favoriteFolders) ? this.settings.favoriteFolders : []
+    return list
+      .filter(f => f && typeof f.id === 'string' && typeof f.name === 'string')
+      .map(f => ({
+        id: f.id,
+        name: String(f.name),
+        emoji: String(f.emoji || '📁'),
+        createdAt: Number(f.createdAt) || Date.now(),
+      }))
+  }
+
+  addFavoriteFolder(name: string, emoji?: string): FavoriteFolder | null {
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return null
+    const folder: FavoriteFolder = {
+      id: 'fld_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      name: trimmed,
+      emoji: emoji || '📁',
+      createdAt: Date.now(),
+    }
+    this.settings.favoriteFolders = this.getFavoriteFolders().concat(folder)
+    this.save()
+    return folder
+  }
+
+  renameFavoriteFolder(id: string, name: string): boolean {
+    const folders = this.getFavoriteFolders()
+    const folder = folders.find(f => f.id === id)
+    if (!folder) return false
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return false
+    folder.name = trimmed
+    this.settings.favoriteFolders = folders
+    this.save()
+    return true
+  }
+
+  deleteFavoriteFolder(id: string): boolean {
+    const folders = this.getFavoriteFolders().filter(f => f.id !== id)
+    this.settings.favoriteFolders = folders
+    this.save()
+    return true
+  }
+
+  setFavoriteFolderEmoji(id: string, emoji: string): boolean {
+    const folders = this.getFavoriteFolders()
+    const folder = folders.find(f => f.id === id)
+    if (!folder) return false
+    folder.emoji = String(emoji || '📁')
+    this.settings.favoriteFolders = folders
     this.save()
     return true
   }

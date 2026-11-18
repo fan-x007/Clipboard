@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type {
   ClipboardItem,
   AppSettings,
@@ -9,6 +9,7 @@ import type {
   TypingStatus,
   Reminder,
   ReminderRepeat,
+  FavoriteFolder,
 } from './vite-env.d'
 
 type TabType = 'all' | 'files' | 'favorites' | 'token' | 'typing' | 'settings'
@@ -191,10 +192,23 @@ function App() {
   // ─── Translator State ──────────────────────────────────
   const [showTranslator, setShowTranslator] = useState(false)
   const [transDir, setTransDir] = useState<'zh-en' | 'en-zh'>('zh-en')
+  const [transMode, setTransMode] = useState<'translate' | 'explain'>('translate')
   const [transInput, setTransInput] = useState('')
   const [transOutput, setTransOutput] = useState('')
   const [transLoading, setTransLoading] = useState(false)
   const [transError, setTransError] = useState('')
+
+  // ─── Favorite Folder State ────────────────────────────────
+  const [folders, setFolders] = useState<FavoriteFolder[]>([])
+  const [selectedFolder, setSelectedFolder] = useState<string>('all') // 'all' | 'none' | folderId
+  const [showFolderMenu, setShowFolderMenu] = useState<string | null>(null) // itemId of open folder menu
+  const [newFolderName, setNewFolderName] = useState('')
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false)
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
+  const [renameFolderName, setRenameFolderName] = useState('')
+  const newFolderInputRef = useRef<HTMLInputElement | null>(null)
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
+
   const [translateConfig, setTranslateConfig] = useState({
     apiUrl: '',
     apiKey: '',
@@ -227,10 +241,17 @@ function App() {
     const matchesSearch = searchQuery === '' ||
       item.preview.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (item.fileName && item.fileName.toLowerCase().includes(searchQuery.toLowerCase()))
-    const matchesTab = (activeTab === 'all' && item.inHistory) ||
-      (activeTab === 'files' && item.type === 'file' && item.inHistory) ||
-      (activeTab === 'favorites' && item.favorite)
-    return matchesSearch && matchesTab
+    let matchesTab = false
+    if (activeTab === 'all') matchesTab = item.inHistory
+    else if (activeTab === 'files') matchesTab = item.type === 'file' && item.inHistory
+    else if (activeTab === 'favorites') matchesTab = item.favorite
+
+    let matchesFolder = true
+    if (activeTab === 'favorites' && matchesTab) {
+      if (selectedFolder === 'none') matchesFolder = !item.folderId
+      else if (selectedFolder !== 'all') matchesFolder = item.folderId === selectedFolder
+    }
+    return matchesSearch && matchesTab && matchesFolder
   })
 
   // Load initial history
@@ -258,6 +279,13 @@ function App() {
         setSelectedIndex(0)
       })
     }
+  }, [])
+
+  // Load favorite folders and listen for updates
+  useEffect(() => {
+    if (!window.clipboardApi) return
+    window.clipboardApi.listFavoriteFolders().then(setFolders)
+    window.clipboardApi.onFavoriteFoldersUpdated(setFolders)
   }, [])
 
   // ─── Token Balance Effects ────────────────────────────────
@@ -493,6 +521,70 @@ function App() {
       window.clipboardApi?.clearFavorites()
     }
   }, [])
+
+  // ─── Favorite Folder Handlers ────────────────────────────
+
+  const handleCreateFolder = useCallback(async () => {
+    const name = newFolderName.trim()
+    if (!name) return
+    const folder = await window.clipboardApi?.createFavoriteFolder(name)
+    if (folder) {
+      setNewFolderName('')
+      setShowNewFolderInput(false)
+      setSelectedFolder(folder.id)
+    }
+  }, [newFolderName])
+
+  const startRenameFolder = useCallback((id: string, currentName: string) => {
+    setRenamingFolderId(id)
+    setRenameFolderName(currentName)
+    setTimeout(() => {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    }, 0)
+  }, [])
+
+  const handleRenameFolder = useCallback(async () => {
+    if (!renamingFolderId) return
+    const name = renameFolderName.trim()
+    if (!name) {
+      setRenamingFolderId(null)
+      return
+    }
+    await window.clipboardApi?.renameFavoriteFolder(renamingFolderId, name)
+    setRenamingFolderId(null)
+  }, [renamingFolderId, renameFolderName])
+
+  const handleDeleteFolder = useCallback(async (id: string) => {
+    if (!confirm('确定删除该收藏夹吗？收藏项不会被删除，会归入「未分类」。')) return
+    await window.clipboardApi?.deleteFavoriteFolder(id)
+    if (selectedFolder === id) setSelectedFolder('all')
+  }, [selectedFolder])
+
+  const handleMoveToFolder = useCallback(async (itemId: string, folderId: string | undefined) => {
+    await window.clipboardApi?.setFavoriteFolder(itemId, folderId)
+    setShowFolderMenu(null)
+  }, [])
+
+  const toggleFolderMenu = useCallback((itemId: string) => {
+    setShowFolderMenu(prev => (prev === itemId ? null : itemId))
+  }, [])
+
+  // Close any open folder menu when clicking outside
+  useEffect(() => {
+    if (!showFolderMenu && !renamingFolderId) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (showFolderMenu && !target.closest('.folder-move-menu') && !target.closest('.folder-move-btn')) {
+        setShowFolderMenu(null)
+      }
+      if (renamingFolderId && !target.closest('.folder-chip-rename')) {
+        setRenamingFolderId(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showFolderMenu, renamingFolderId])
 
   const handleClose = useCallback(() => {
     window.clipboardApi?.hideWindow()
@@ -950,6 +1042,18 @@ function App() {
     setShowTranslator(true)
   }, [inlineTrans, settings])
 
+  // Open the detailed-explanation panel with the given history item.
+  const handleExplainItem = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    setTransInput(trimmed)
+    setTransOutput('')
+    setTransError('')
+    setTransMode('explain')
+    setActiveTab('favorites')
+    setShowTranslator(true)
+  }, [])
+
   // Copy inline translation result, then close the popup
   const handleCopyInlineTrans = useCallback(async (text?: string) => {
     if (!text) return
@@ -973,20 +1077,22 @@ function App() {
     if (!transInput.trim() || transLoading) return
     setTransLoading(true)
     setTransError('')
+    const action = transMode === 'explain' ? '详解' : '翻译'
     try {
-      const target = transDir === 'zh-en' ? 'en' : 'zh'
-      const res = await window.translateApi?.run(transInput, target)
+      const res = transMode === 'explain'
+        ? await window.translateApi?.explain(transInput)
+        : await window.translateApi?.run(transInput, transDir === 'zh-en' ? 'en' : 'zh')
       if (res?.success && res.text !== undefined) {
         setTransOutput(res.text)
       } else {
-        setTransError(res?.error || '翻译失败')
+        setTransError(res?.error || `${action}失败`)
       }
     } catch (e) {
-      setTransError(`翻译失败: ${(e as Error).message}`)
+      setTransError(`${action}失败: ${(e as Error).message}`)
     } finally {
       setTransLoading(false)
     }
-  }, [transInput, transDir, transLoading])
+  }, [transInput, transMode, transDir, transLoading])
 
   const handleCopyTranslation = useCallback(async () => {
     if (!transOutput) return
@@ -1200,6 +1306,18 @@ function App() {
   const fileCount = items.filter(i => i.type === 'file').length
   const textCount = items.filter(i => i.type === 'text').length
 
+  // Count favorites per folder for the toolbar chips
+  const favoriteCount = items.filter(i => i.favorite).length
+  const folderCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: favoriteCount, none: 0 }
+    for (const it of items) {
+      if (!it.favorite) continue
+      if (it.folderId) counts[it.folderId] = (counts[it.folderId] || 0) + 1
+      else counts.none = (counts.none || 0) + 1
+    }
+    return counts
+  }, [items, favoriteCount])
+
   return (
     <div className="app">
       {/* Header */}
@@ -1276,7 +1394,7 @@ function App() {
         </button>
         <button
           className={`tab ${activeTab === 'favorites' ? 'active' : ''}`}
-          onClick={() => setActiveTab('favorites')}
+          onClick={() => { setActiveTab('favorites'); setShowTranslator(false) }}
         >
           收藏 ({items.filter(i => i.favorite).length})
         </button>
@@ -2182,19 +2300,44 @@ function App() {
       ) : activeTab === 'favorites' && showTranslator ? (
         <div className="translator-panel">
           <div className="trans-toolbar">
-            <div className="trans-direction">
+            <div className="trans-toolbar-left">
               <button
-                className={`trans-dir-btn ${transDir === 'zh-en' ? 'active' : ''}`}
-                onClick={() => transDir !== 'zh-en' && handleSwapDirection()}
+                className="btn btn-ghost trans-clear-btn"
+                onClick={() => setShowTranslator(false)}
+                title="返回收藏列表"
               >
-                中 → 英
+                ← 返回
               </button>
-              <button
-                className={`trans-dir-btn ${transDir === 'en-zh' ? 'active' : ''}`}
-                onClick={() => transDir !== 'en-zh' && handleSwapDirection()}
-              >
-                英 → 中
-              </button>
+              <div className="trans-direction">
+                <button
+                  className={`trans-dir-btn ${transMode === 'translate' ? 'active' : ''}`}
+                  onClick={() => { setTransMode('translate'); setTransOutput(''); setTransError('') }}
+                >
+                  翻译
+                </button>
+                <button
+                  className={`trans-dir-btn ${transMode === 'explain' ? 'active' : ''}`}
+                  onClick={() => { setTransMode('explain'); setTransOutput(''); setTransError('') }}
+                >
+                  详解
+                </button>
+              </div>
+              {transMode === 'translate' && (
+                <div className="trans-direction">
+                  <button
+                    className={`trans-dir-btn ${transDir === 'zh-en' ? 'active' : ''}`}
+                    onClick={() => transDir !== 'zh-en' && handleSwapDirection()}
+                  >
+                    中 → 英
+                  </button>
+                  <button
+                    className={`trans-dir-btn ${transDir === 'en-zh' ? 'active' : ''}`}
+                    onClick={() => transDir !== 'en-zh' && handleSwapDirection()}
+                  >
+                    英 → 中
+                  </button>
+                </div>
+              )}
             </div>
             <button
               className="btn btn-ghost trans-clear-btn"
@@ -2206,7 +2349,11 @@ function App() {
 
           <textarea
             className="trans-input"
-            placeholder={transDir === 'zh-en' ? '输入要翻译的中文...' : '输入要翻译的英文...'}
+            placeholder={
+              transMode === 'explain'
+                ? '粘贴或输入要详解的内容...'
+                : transDir === 'zh-en' ? '输入要翻译的中文...' : '输入要翻译的英文...'
+            }
             value={transInput}
             onChange={e => setTransInput(e.target.value)}
             onKeyDown={e => {
@@ -2222,7 +2369,9 @@ function App() {
             onClick={handleTranslate}
             disabled={transLoading || !transInput.trim()}
           >
-            {transLoading ? '翻译中...' : '翻译（Ctrl+Enter）'}
+            {transLoading
+              ? (transMode === 'explain' ? '详解中...' : '翻译中...')
+              : (transMode === 'explain' ? '详解（Ctrl+Enter）' : '翻译（Ctrl+Enter）')}
           </button>
 
           {transError && <div className="trans-error">✗ {transError}</div>}
@@ -2230,7 +2379,7 @@ function App() {
           {transOutput && (
             <div className="trans-result">
               <div className="trans-result-header">
-                <span>翻译结果</span>
+                <span>{transMode === 'explain' ? '详细解释' : '翻译结果'}</span>
                 <button
                   className="btn btn-secondary trans-copy-btn"
                   onClick={handleCopyTranslation}
@@ -2243,7 +2392,7 @@ function App() {
           )}
 
           <div className="trans-hint">
-            💡 使用「设置 → 翻译服务」中配置的大模型 API 进行翻译。打开翻译时会自动带入最近复制的文本。
+            💡 使用「设置 → 翻译服务」中配置的大模型 API。「翻译」只输出译文，「详解」会拆解要点、解释术语和注意事项。打开时会自动带入最近复制的文本。
           </div>
         </div>
       ) : activeTab === 'typing' ? (
@@ -2394,7 +2543,85 @@ function App() {
           </div>
         </div>
       ) : (
-        <div className="list" ref={listRef}>
+        <>
+          {activeTab === 'favorites' && (
+            <div className="folder-toolbar">
+              <label className="folder-select-label">收藏夹：</label>
+              <select
+                className="folder-select"
+                value={selectedFolder}
+                onChange={e => setSelectedFolder(e.target.value)}
+              >
+                <option value="all">全部 ({folderCounts.all})</option>
+                {folders.map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.emoji} {f.name} ({folderCounts[f.id] || 0})
+                  </option>
+                ))}
+                <option value="none">未分类 ({folderCounts.none || 0})</option>
+              </select>
+
+              {/* Rename / delete the currently selected real folder */}
+              {selectedFolder !== 'all' && selectedFolder !== 'none' && (
+                <>
+                  {renamingFolderId === selectedFolder ? (
+                    <input
+                      ref={renameInputRef}
+                      type="text"
+                      className="folder-rename-input folder-inline-input"
+                      value={renameFolderName}
+                      onChange={e => setRenameFolderName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleRenameFolder()
+                        if (e.key === 'Escape') setRenamingFolderId(null)
+                      }}
+                      onBlur={handleRenameFolder}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        className="mini-btn folder-manage-btn"
+                        onClick={() => {
+                          const f = folders.find(x => x.id === selectedFolder)
+                          if (f) startRenameFolder(f.id, f.name)
+                        }}
+                        title="重命名当前收藏夹"
+                      >✏️</button>
+                      <button
+                        className="mini-btn folder-manage-btn"
+                        onClick={() => handleDeleteFolder(selectedFolder)}
+                        title="删除当前收藏夹"
+                      >🗑️</button>
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* New folder input */}
+              {showNewFolderInput ? (
+                <input
+                  ref={newFolderInputRef}
+                  type="text"
+                  className="folder-rename-input folder-inline-input"
+                  placeholder="新文件夹名"
+                  value={newFolderName}
+                  onChange={e => setNewFolderName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleCreateFolder()
+                    if (e.key === 'Escape') { setShowNewFolderInput(false); setNewFolderName('') }
+                  }}
+                  onBlur={handleCreateFolder}
+                />
+              ) : (
+                <button
+                  className="mini-btn folder-manage-btn"
+                  onClick={() => setShowNewFolderInput(true)}
+                  title="新建收藏夹"
+                >+</button>
+              )}
+            </div>
+          )}
+          <div className="list" ref={listRef}>
           {filteredItems.length === 0 ? (
             <div className="empty">
               <div className="empty-icon">📭</div>
@@ -2456,6 +2683,15 @@ function App() {
                           >
                             {item.favorite ? '⭐' : '☆'}
                           </button>
+                          {item.favorite && (
+                            <button
+                              className="mini-btn folder-move-btn"
+                              onClick={e => { e.stopPropagation(); toggleFolderMenu(item.id) }}
+                              title="移动到收藏夹"
+                            >
+                              🗂️
+                            </button>
+                          )}
                           <button
                             className="mini-btn delete"
                             onClick={e => {
@@ -2466,6 +2702,25 @@ function App() {
                           >
                             ✕
                           </button>
+                          {showFolderMenu === item.id && item.favorite && (
+                            <div className="folder-move-menu" onClick={e => e.stopPropagation()}>
+                              {folders.map(f => (
+                                <button
+                                  key={f.id}
+                                  className={`folder-move-option ${item.folderId === f.id ? 'current' : ''}`}
+                                  onClick={() => handleMoveToFolder(item.id, f.id)}
+                                >
+                                  {f.emoji} {f.name}
+                                </button>
+                              ))}
+                              <button
+                                className={`folder-move-option ${!item.folderId ? 'current' : ''}`}
+                                onClick={() => handleMoveToFolder(item.id, undefined)}
+                              >
+                                📋 未分类
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2490,12 +2745,31 @@ function App() {
                           <span className="trans-entry-icon">文A</span>
                         </button>
                         <button
+                          className="mini-btn"
+                          onClick={e => {
+                            e.stopPropagation()
+                            handleExplainItem(item.text)
+                          }}
+                          title="详解此条（打开面板逐点解释）"
+                        >
+                          <span className="trans-entry-icon">解</span>
+                        </button>
+                        <button
                           className={`mini-btn favorite ${item.favorite ? 'active' : ''}`}
                           onClick={e => handleToggleFavorite(item.id, e)}
                           title={item.favorite ? '取消收藏' : '收藏'}
                         >
                           {item.favorite ? '⭐' : '☆'}
                         </button>
+                        {item.favorite && (
+                          <button
+                            className="mini-btn folder-move-btn"
+                            onClick={e => { e.stopPropagation(); toggleFolderMenu(item.id) }}
+                            title="移动到收藏夹"
+                          >
+                            🗂️
+                          </button>
+                        )}
                         <button
                           className="mini-btn delete"
                           onClick={e => {
@@ -2506,6 +2780,25 @@ function App() {
                         >
                           ✕
                         </button>
+                        {showFolderMenu === item.id && item.favorite && (
+                          <div className="folder-move-menu" onClick={e => e.stopPropagation()}>
+                            {folders.map(f => (
+                              <button
+                                key={f.id}
+                                className={`folder-move-option ${item.folderId === f.id ? 'current' : ''}`}
+                                onClick={() => handleMoveToFolder(item.id, f.id)}
+                              >
+                                {f.emoji} {f.name}
+                              </button>
+                            ))}
+                            <button
+                              className={`folder-move-option ${!item.folderId ? 'current' : ''}`}
+                              onClick={() => handleMoveToFolder(item.id, undefined)}
+                            >
+                              📋 未分类
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                     {inlineTrans?.id === item.id && (
@@ -2536,6 +2829,7 @@ function App() {
             ))
           )}
         </div>
+        </>
       )}
 
       {/* Footer */}
